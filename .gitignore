@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.angular/
+coverage/
+*.log
+.env
+# Base de datos SQLite y cachés (se crean al usar la app)
+server/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+.cache/
