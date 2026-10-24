@@ -95,13 +95,15 @@ npm start              # http://localhost:3100 (sirve la API y la web)
 
 Desarrollo con recarga: `npm run dev` (API en `:3100`, Angular en `:4300` con proxy a `/api`).
 
+`npm start` es **multiplataforma** (Windows, Linux y macOS): el workspace `server` arranca con `node start.mjs`, que fija `NODE_ENV=production` sin depender de la sintaxis `VAR=valor` de shells Unix (que falla en `cmd.exe` de Windows).
+
 ### Scripts
 
 | Script | Qué hace |
 | --- | --- |
 | `npm run dev` | API (tsx watch) + Angular dev server |
 | `npm run build` | Compila web y servidor |
-| `npm start` | Producción: sirve API + web en el puerto `PORT` (3100) |
+| `npm start` | Producción (Windows/Linux/macOS): API + web en el puerto `PORT` (3100) vía `server/start.mjs` |
 | `npm test` | Tests del servidor (Vitest) y de la web (Angular + Vitest) |
 | `npm run lint` | ESLint + `tsc --noEmit` |
 | `npm run sync -- feithnoir` | Sincroniza un usuario desde la terminal |
