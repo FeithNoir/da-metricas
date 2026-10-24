@@ -209,10 +209,11 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'Ruta no encontrada.' });
-    if (opts.serveStatic && existsSync(config.webDist)) return reply.type('text/html').sendFile('index.html');
+    // Rutas de Angular (sin extensión) → index.html; un archivo inexistente → 404 real.
+    if (opts.serveStatic && existsSync(config.webDist) && !/\.[a-z0-9]+(\?|$)/i.test(req.url)) return reply.type('text/html').sendFile('index.html');
     return reply.code(404).send({ error: 'No encontrado.' });
   });
-  if (opts.serveStatic && existsSync(config.webDist)) await app.register(fastifyStatic, { root: config.webDist, wildcard: false });
+  if (opts.serveStatic && existsSync(config.webDist)) await app.register(fastifyStatic, { root: config.webDist, wildcard: true });
 
   return app;
 }

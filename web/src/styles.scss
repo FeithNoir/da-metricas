@@ -41,6 +41,9 @@ h3 { font-size: 1rem; margin-top: 1rem; color: var(--muted); font-weight: 600; }
 .brand__mark { color: var(--accent); }
 .topbar__search { flex: 0 1 360px; }
 .page { max-width: 1180px; margin: 0 auto; padding: 1.25rem; display: grid; gap: 1rem; }
+app-home-page, app-artist-page, app-work-detail-page, app-works-table, app-analysis-view { display: grid; gap: 1rem; min-width: 0; }
+.page > *, .card > * { min-width: 0; }
+.artist-head__id p { overflow-wrap: anywhere; }
 .footer { max-width: 1180px; margin: 1rem auto 2rem; padding: 0 1.25rem; color: var(--muted); font-size: 0.8rem; }
 
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem 1.25rem; min-width: 0; }
@@ -173,7 +176,9 @@ details summary { cursor: pointer; color: var(--accent); margin-top: 0.6rem; }
   .topbar__search { flex: 1 1 100%; }
   .page { padding: 0.8rem; }
   .hero h1 { font-size: 1.5rem; }
-  .filters { grid-template-columns: 1fr; }
+  .filters { grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+  .filters .field:nth-child(-n + 2) { grid-column: 1 / -1; }
+  .work__media img { max-height: 240px; object-fit: cover; }
   .bars__row { grid-template-columns: minmax(0, 8rem) 1fr auto; }
   .works .title { min-width: 160px; }
 }
