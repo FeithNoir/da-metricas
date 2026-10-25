@@ -107,3 +107,16 @@ export function splitList(s: string): string[] {
   }
   return out;
 }
+
+/** Edad legible a partir de horas: “4 min”, “3 h”, “12 días”, “2,5 años”. */
+export function ageText(hours: number | null | undefined): string {
+  if (hours === null || hours === undefined || !Number.isFinite(hours)) return '—';
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min`;
+  if (hours < 48) return `${num(hours, hours < 10 ? 1 : 0)} h`;
+  const d = hours / 24;
+  if (d < 365) return `${num(d, 0)} días`;
+  return `${num(d / 365, 1)} años`;
+}
+
+export const KIND_LABEL: Record<string, string> = { recent: 'Recientes', popular: 'Populares' };
+export const scopeLabel = (s: string) => (s === 'general' ? 'General' : `#${s}`);

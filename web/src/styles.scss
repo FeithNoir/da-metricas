@@ -41,7 +41,8 @@ h3 { font-size: 1rem; margin-top: 1rem; color: var(--muted); font-weight: 600; }
 .brand__mark { color: var(--accent); }
 .topbar__search { flex: 0 1 360px; }
 .page { max-width: 1180px; margin: 0 auto; padding: 1.25rem; display: grid; gap: 1rem; }
-app-home-page, app-artist-page, app-work-detail-page, app-works-table, app-analysis-view, app-classification-view, app-dictionary-page { display: grid; gap: 1rem; min-width: 0; }
+app-home-page, app-artist-page, app-work-detail-page, app-works-table, app-analysis-view, app-classification-view, app-dictionary-page,
+app-trends-page, app-benchmark-view, app-contrast-view { display: grid; gap: 1rem; min-width: 0; }
 .page > *, .card > * { min-width: 0; }
 .artist-head__id p { overflow-wrap: anywhere; }
 .footer { max-width: 1180px; margin: 1rem auto 2rem; padding: 0 1.25rem; color: var(--muted); font-size: 0.8rem; }
@@ -230,4 +231,76 @@ rect.stack { fill: var(--c); stroke: var(--panel); stroke-width: 0.5; }
   .classif-dl { grid-template-columns: 1fr; gap: 0.15rem; }
   .classif-dl dd { margin-bottom: 0.4rem; }
   .kpi strong { font-size: 1.2rem; }
+}
+
+/* ───────── Tendencias ───────── */
+:root { --g-artist: var(--accent); --g-scoped: #a3d977; --g-recent: var(--accent-2); --g-popular: #ffb454; }
+.topbar__nav { display: flex; gap: 0.75rem; margin-right: auto; margin-left: 0.5rem; }
+.topbar__link { color: var(--muted); padding: 0.25rem 0.2rem; border-bottom: 2px solid transparent; }
+.topbar__link:hover, .topbar__link--on { color: var(--text); text-decoration: none; border-bottom-color: var(--accent); }
+.trends-head h1 { margin-bottom: 0.2rem; }
+.form-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 9rem) auto; gap: 0.75rem; align-items: end; }
+.trends-controls__actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.trends-controls .check { margin-top: 0.3rem; }
+.run-picker { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: end; }
+.run-picker .field { flex: 1 1 220px; }
+.run-picker p { margin: 0; }
+.btn--small { padding: 0.3rem 0.6rem; font-size: 0.82rem; }
+.badge--warn { border-color: #ffb454; color: #ffb454; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.cmp-key--artist { --c: var(--g-artist); } .cmp-key--artistScoped { --c: var(--g-scoped); }
+.cmp-key--recent { --c: var(--g-recent); } .cmp-key--popular { --c: var(--g-popular); }
+.legend__item[class*='cmp-key--']::before { color: var(--c); }
+.cmp-fill--artist { --c: var(--g-artist); } .cmp-fill--artistScoped { --c: var(--g-scoped); }
+.cmp-fill--recent { --c: var(--g-recent); } .cmp-fill--popular { --c: var(--g-popular); }
+rect[class*='cmp-fill--'] { fill: var(--c); }
+rect.chart__col--muted { opacity: 0.35; }
+.cmp { list-style: none; margin: 0.4rem 0 0; padding: 0; display: grid; gap: 0.5rem; }
+.cmp__row { display: grid; grid-template-columns: minmax(0, 10rem) 1fr; gap: 0.6rem; align-items: center; }
+.cmp__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.88rem; }
+.cmp__bars { display: grid; gap: 2px; min-width: 0; }
+.cmp__bar { display: grid; grid-template-columns: 1fr 4.5rem; gap: 0.4rem; align-items: center; }
+.cmp__track { height: 7px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+.cmp__fill { display: block; height: 100%; background: var(--c); border-radius: 4px; }
+.cmp__value { font-size: 0.75rem; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.meter { display: inline-block; width: 6rem; height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; vertical-align: middle; margin-right: 0.35rem; }
+.meter__fill { display: block; height: 100%; background: var(--accent); }
+
+.advice { list-style: none; margin: 0.5rem 0; padding: 0; display: grid; gap: 0.75rem; }
+.advice__item { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; padding: 0.75rem 0.9rem; background: var(--panel-2); }
+.advice__item[data-tone='oportunidad'] { border-left-color: var(--accent-2); }
+.advice__item[data-tone='alerta'] { border-left-color: #ff8fa3; }
+.advice__item[data-tone='info'] { border-left-color: #ffb454; }
+.advice__head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem; }
+.advice__head h3 { margin: 0; color: var(--text); flex: 1 1 16rem; }
+.advice__n { display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--panel); border: 1px solid var(--line); font-weight: 700; font-size: 0.85rem; }
+.advice__item p { margin: 0.45rem 0; }
+.conf[data-conf='alta'] { border-color: var(--accent); color: var(--accent); }
+.conf[data-conf='media'] { border-color: var(--accent-2); color: var(--accent-2); }
+.conf[data-conf='baja'] { border-color: #ffb454; color: #ffb454; }
+.evidence { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 0.35rem 1rem; margin: 0; font-size: 0.85rem; }
+.evidence div { min-width: 0; }
+.evidence dt { color: var(--muted); font-size: 0.78rem; }
+.evidence dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.thumbs { list-style: none; margin: 0.5rem 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: 0.6rem; }
+.thumbs__item a { display: grid; gap: 0.3rem; color: var(--text); }
+.thumbs__item a:hover { text-decoration: none; }
+.thumbs__item img, .thumbs__ph { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); }
+.thumbs__ph { display: grid; place-items: center; color: var(--muted); font-size: 0.8rem; }
+.thumbs__meta { display: grid; min-width: 0; }
+.thumbs__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
+.thumbs__meta small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 860px) {
+  .form-row { grid-template-columns: 1fr 8rem; }
+  .trends-controls__actions { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .topbar__nav { margin-left: 0; }
+  .cmp__row { grid-template-columns: 1fr; gap: 0.2rem; }
+  .meter { width: 3.5rem; }
+  .thumbs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

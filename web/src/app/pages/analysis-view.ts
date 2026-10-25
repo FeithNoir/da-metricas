@@ -1,11 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import { BarChart, type Bar } from '../charts/bar-chart';
 import { ColumnChart, type Column } from '../charts/column-chart';
 import { LineChart, type LineSeries } from '../charts/line-chart';
 import { ScatterChart, type ScatterPoint } from '../charts/scatter-chart';
 import { compact, corr, corrLabel, date, dateTime, METRIC_LABEL, metricValue, num, pct } from '../format';
 import type { Analysis, Descriptive, GroupStat, Work, WorkRow } from '../models';
+import { BENCHMARK_CONTEXT, WorkLink } from '../work-link';
 import { ClassificationView } from './classification-view';
 
 type DateGroup = 'byMonth' | 'byYear' | 'byWeekday' | 'byHour';
@@ -14,7 +14,7 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
 @Component({
   selector: 'app-analysis-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, BarChart, ColumnChart, LineChart, ScatterChart, ClassificationView],
+  imports: [WorkLink, BarChart, ColumnChart, LineChart, ScatterChart, ClassificationView],
   template: `
     @let a = analysis();
     <section class="card">
@@ -107,7 +107,7 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
           <h3>Mayor tasa de favoritos</h3>
           <ol class="rank">
             @for (w of a.engagement.topFavRate; track w.id) {
-              <li><a [routerLink]="['/obra', w.id]">{{ w.title }}</a> <span class="num">{{ p(w.favRate, 2) }}</span> <small class="muted">({{ n(w.favourites) }}/{{ n(w.views) }})</small></li>
+              <li><app-work-link [id]="w.id" [title]="w.title" /> <span class="num">{{ p(w.favRate, 2) }}</span> <small class="muted">({{ n(w.favourites) }}/{{ n(w.views) }})</small></li>
             }
           </ol>
         </div>
@@ -115,7 +115,7 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
           <h3>Menor tasa de favoritos</h3>
           <ol class="rank">
             @for (w of a.engagement.bottomFavRate; track w.id) {
-              <li><a [routerLink]="['/obra', w.id]">{{ w.title }}</a> <span class="num">{{ p(w.favRate, 2) }}</span> <small class="muted">({{ n(w.favourites) }}/{{ n(w.views) }})</small></li>
+              <li><app-work-link [id]="w.id" [title]="w.title" /> <span class="num">{{ p(w.favRate, 2) }}</span> <small class="muted">({{ n(w.favourites) }}/{{ n(w.views) }})</small></li>
             }
           </ol>
         </div>
@@ -124,7 +124,7 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
         <h3>Mayor tasa de comentarios</h3>
         <ol class="rank rank--inline">
           @for (w of a.engagement.topCommentRate.slice(0, 5); track w.id) {
-            <li><a [routerLink]="['/obra', w.id]">{{ w.title }}</a> <span class="num">{{ p(w.commentRate, 2) }}</span></li>
+            <li><app-work-link [id]="w.id" [title]="w.title" /> <span class="num">{{ p(w.commentRate, 2) }}</span></li>
           }
         </ol>
       }
@@ -144,7 +144,7 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
             @if (o.high.length) {
               <ul class="plain small">
                 @for (h of o.high.slice(0, 5); track h.id) {
-                  <li>▲ <a [routerLink]="['/obra', h.id]">{{ h.title }}</a> — {{ mv(o.metric, h.value) }} <span class="muted">(z = {{ n(h.z, 1) }})</span></li>
+                  <li>▲ <app-work-link [id]="h.id" [title]="h.title" /> — {{ mv(o.metric, h.value) }} <span class="muted">(z = {{ n(h.z, 1) }})</span></li>
                 }
                 @if (o.high.length > 5) {
                   <li class="muted">… y {{ o.high.length - 5 }} más</li>
@@ -152,7 +152,7 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
               </ul>
             }
             @for (l of o.low.slice(0, 3); track l.id) {
-              <p class="small">▼ <a [routerLink]="['/obra', l.id]">{{ l.title }}</a> — {{ mv(o.metric, l.value) }}</p>
+              <p class="small">▼ <app-work-link [id]="l.id" [title]="l.title" /> — {{ mv(o.metric, l.value) }}</p>
             }
             @if (!o.high.length && !o.low.length) {
               <p class="muted small">Sin atípicos.</p>
@@ -246,6 +246,7 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
       <app-column-chart [data]="dateCols()" [label]="'Obras por ' + dateGroup()" [maxLabels]="dateGroup() === 'byMonth' ? 10 : 24" />
     </section>
 
+    @if (!bench) {
     <section class="card">
       <h2>Crecimiento entre sincronizaciones</h2>
       @if (a.growth; as g) {
@@ -268,6 +269,7 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
         </p>
       }
     </section>
+    }
     <p class="muted small">Análisis generado {{ dt(a.generatedAt) }}.</p>
   `,
 })
@@ -277,6 +279,8 @@ export class AnalysisView {
   readonly username = input('');
   /** Reclasificación hecha desde la sección de franquicias: hay que recargar. */
   readonly changed = output<void>();
+  /** Presente cuando se analiza una muestra de tendencias (no una galería). */
+  protected readonly bench = inject(BENCHMARK_CONTEXT, { optional: true });
 
   protected readonly n = num;
   protected readonly c = compact;
@@ -313,7 +317,8 @@ export class AnalysisView {
   });
 
   protected bars(rows: WorkRow[], key: 'views' | 'viewsPerDay'): Bar[] {
-    return rows.map((w) => ({ label: w.title, value: w[key], link: ['/obra', w.id] }));
+    const urls = this.bench?.urls();
+    return rows.map((w) => (urls ? { label: w.title, value: w[key], href: urls.get(w.id) } : { label: w.title, value: w[key], link: ['/obra', w.id] }));
   }
 
   protected readonly corrMatrix = computed(() => this.analysis().correlations[this.corrKind()]);

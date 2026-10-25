@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { ApiService, errorMessage } from '../api.service';
+import { BENCHMARK_CONTEXT, WorkLink } from '../work-link';
 import { BarChart, type Bar } from '../charts/bar-chart';
 import { StackedChart, type StackSeries } from '../charts/stacked-chart';
 import { compact, num, pct, pValue, RATING_LABEL } from '../format';
@@ -21,23 +22,25 @@ const METRICS: { key: CatMetric; label: string }[] = [
 @Component({
   selector: 'app-classification-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, BarChart, StackedChart],
+  imports: [RouterLink, BarChart, StackedChart, WorkLink],
   template: `
     @let c = data();
     <section class="card" id="clasificacion">
       <div class="card-head">
         <h2>Franquicias, personajes y SFW/NSFW</h2>
-        <div class="card-head__actions">
-          <button type="button" class="btn" (click)="reclassify()" [disabled]="busy()">{{ busy() ? 'Reclasificando…' : 'Reclasificar todo' }}</button>
-          <a class="btn" routerLink="/diccionario">Diccionario</a>
-        </div>
+        @if (!bench) {
+          <div class="card-head__actions">
+            <button type="button" class="btn" (click)="reclassify()" [disabled]="busy()">{{ busy() ? 'Reclasificando…' : 'Reclasificar todo' }}</button>
+            <a class="btn" routerLink="/diccionario">Diccionario</a>
+          </div>
+        }
       </div>
       <p class="explain">
         Cada obra se clasifica con reglas sobre sus <strong>etiquetas</strong> y su <strong>título</strong> (y, si no hay nada, su descripción), usando un
         diccionario de franquicias y personajes que puedes ampliar. Un personaje identificado implica su franquicia (Sarada Uchiha → Naruto).
         Una obra puede tener varias franquicias, por eso los porcentajes pueden sumar más de 100 %. <strong>SFW/NSFW</strong> no se adivina: es la
         marca de contenido maduro que pone DeviantArt. Las categorías con menos de {{ c.minWorks }} obras van atenuadas y marcadas como
-        <em>muestra pequeña</em>. Toca un nombre para ver sus obras.
+        <em>muestra pequeña</em>.@if (!bench) { Toca un nombre para ver sus obras.}
       </p>
       <div class="kpis">
         <div class="kpi"><span>Con franquicia o fuente</span><strong>{{ p(cov().withFranchise / (cov().works || 1), 0) }}</strong><small class="muted">{{ n(cov().withFranchise) }} de {{ n(cov().works) }}</small></div>
@@ -45,7 +48,9 @@ const METRICS: { key: CatMetric; label: string }[] = [
         <div class="kpi"><span>Originales</span><strong>{{ n(cov().original) }}</strong></div>
         <div class="kpi"><span>Sin clasificar</span><strong>{{ n(cov().unclassified) }}</strong></div>
         <div class="kpi"><span>Con personaje identificado</span><strong>{{ n(cov().withCharacter) }}</strong><small class="muted">{{ n(cov().charactersDistinct) }} personajes</small></div>
-        <div class="kpi"><span>Correcciones manuales</span><strong>{{ n(cov().overrides) }}</strong></div>
+        @if (!bench) {
+          <div class="kpi"><span>Correcciones manuales</span><strong>{{ n(cov().overrides) }}</strong></div>
+        }
       </div>
       @if (notice()) {
         <p class="alert" role="status">{{ notice() }}</p>
@@ -78,12 +83,12 @@ const METRICS: { key: CatMetric; label: string }[] = [
             <tbody>
               @for (r of c.franchises; track r.key) {
                 <tr [class.muted]="r.lowSample">
-                  <th scope="row"><a [routerLink]="[]" [queryParams]="{ tab: null, franquicia: r.key }">{{ r.label }}</a>@if (r.lowSample) { <span class="badge">muestra pequeña</span>}</th>
+                  <th scope="row">@if (bench) {<span>{{ r.label }}</span>} @else {<a [routerLink]="[]" [queryParams]="{ tab: null, franquicia: r.key }">{{ r.label }}</a>}@if (r.lowSample) { <span class="badge">muestra pequeña</span>}</th>
                   <td class="num">{{ n(r.count) }}</td><td class="num">{{ p(r.share) }}</td><td class="num">{{ n(r.totalViews) }}</td><td class="num">{{ p(r.viewsShare) }}</td>
                   <td class="num"><strong>{{ n(r.medianViews) }}</strong></td><td class="num">{{ n(r.meanViews) }}</td><td class="num">{{ n(r.medianFavourites) }}</td>
                   <td class="num">{{ n(r.medianComments) }}</td><td class="num">{{ p(r.medianFavRate, 2) }}</td><td class="num">{{ n(r.medianViewsPerDay, 1) }}</td>
                   <td class="num">{{ p(r.nsfwShare, 0) }}</td>
-                  <td class="top-work">@if (r.top[0]; as t) {<a [routerLink]="['/obra', t.id]">{{ t.title }}</a> <small class="muted">({{ c2(t.views) }})</small>}</td>
+                  <td class="top-work">@if (r.top[0]; as t) {<app-work-link [id]="t.id" [title]="t.title" /> <small class="muted">({{ c2(t.views) }})</small>}</td>
                 </tr>
               }
             </tbody>
@@ -120,12 +125,12 @@ const METRICS: { key: CatMetric; label: string }[] = [
             <tbody>
               @for (r of c.characters; track r.key) {
                 <tr [class.muted]="r.lowSample">
-                  <th scope="row"><a [routerLink]="[]" [queryParams]="{ tab: null, personaje: r.key }">{{ r.label }}</a>@if (r.lowSample) { <span class="badge">muestra pequeña</span>}</th>
+                  <th scope="row">@if (bench) {<span>{{ r.label }}</span>} @else {<a [routerLink]="[]" [queryParams]="{ tab: null, personaje: r.key }">{{ r.label }}</a>}@if (r.lowSample) { <span class="badge">muestra pequeña</span>}</th>
                   <td>{{ r.franchise ?? '—' }}</td>
                   <td class="num">{{ n(r.count) }}</td><td class="num">{{ n(r.totalViews) }}</td><td class="num"><strong>{{ n(r.medianViews) }}</strong></td>
                   <td class="num">{{ n(r.meanViews) }}</td><td class="num">{{ n(r.medianFavourites) }}</td><td class="num">{{ p(r.medianFavRate, 2) }}</td>
                   <td class="num">{{ n(r.medianViewsPerDay, 1) }}</td><td class="num">{{ p(r.nsfwShare, 0) }}</td>
-                  <td class="top-work">@if (r.top[0]; as t) {<a [routerLink]="['/obra', t.id]">{{ t.title }}</a> <small class="muted">({{ c2(t.views) }})</small>}</td>
+                  <td class="top-work">@if (r.top[0]; as t) {<app-work-link [id]="t.id" [title]="t.title" /> <small class="muted">({{ c2(t.views) }})</small>}</td>
                 </tr>
               }
             </tbody>
@@ -146,7 +151,7 @@ const METRICS: { key: CatMetric; label: string }[] = [
       </p>
       <div class="kpis">
         @for (r of c.ratings; track r.key) {
-          <a class="kpi kpi--link" [class.kpi--nsfw]="r.key === 'nsfw'" [routerLink]="[]" [queryParams]="{ tab: null, clasif: r.key }">
+          <a class="kpi" [class.kpi--link]="!bench" [class.kpi--nsfw]="r.key === 'nsfw'" [routerLink]="bench ? null : []" [queryParams]="{ tab: null, clasif: r.key }">
             <span>{{ r.label }} · {{ n(r.count) }} obras ({{ p(r.share, 0) }})</span>
             <strong>{{ n(r.medianViews) }}</strong>
             <small class="muted">mediana de vistas · tasa fav. {{ p(r.medianFavRate, 2) }} · {{ n(r.medianViewsPerDay, 1) }} vistas/día · {{ p(r.viewsShare, 0) }} de las vistas</small>
@@ -192,7 +197,7 @@ const METRICS: { key: CatMetric; label: string }[] = [
             <tbody>
               @for (r of c.franchiseByRating; track r.key) {
                 <tr>
-                  <th scope="row"><a [routerLink]="[]" [queryParams]="{ tab: null, franquicia: r.key }">{{ r.label }}</a></th>
+                  <th scope="row">@if (bench) {<span>{{ r.label }}</span>} @else {<a [routerLink]="[]" [queryParams]="{ tab: null, franquicia: r.key }">{{ r.label }}</a>}</th>
                   <td class="num" [class.muted]="r.sfw.lowSample">{{ n(r.sfw.count) }}</td>
                   <td class="num" [class.muted]="r.sfw.lowSample">{{ n(r.sfw.medianViews) }}@if (r.sfw.count && r.sfw.lowSample) {<span class="badge" title="Menos de {{ c.minWorks }} obras">poca</span>}</td>
                   <td class="num" [class.muted]="r.nsfw.lowSample">{{ n(r.nsfw.count) }}</td>
@@ -241,6 +246,7 @@ const METRICS: { key: CatMetric; label: string }[] = [
 })
 export class ClassificationView {
   private readonly api = inject(ApiService);
+  protected readonly bench = inject(BENCHMARK_CONTEXT, { optional: true });
   readonly data = input.required<ClassificationAnalysis>();
   readonly username = input.required<string>();
   /** Se emite tras reclasificar, para recargar obras y análisis. */
@@ -277,7 +283,7 @@ export class ClassificationView {
         value: r[m],
         hint: m === 'count' ? (r.lowSample ? 'muestra pequeña' : undefined) : `${r.count} obras${r.lowSample ? ', muestra pequeña' : ''}`,
         muted: r.lowSample,
-        link: [],
+        link: this.bench ? undefined : [],
         query: { tab: null, [param]: r.key },
       }));
   }
@@ -291,7 +297,7 @@ export class ClassificationView {
         value: r.medianViews,
         hint: `${r.count} obras${r.lowSample ? ', muestra pequeña' : ''}`,
         muted: r.lowSample,
-        link: [],
+        link: this.bench ? undefined : [],
         query: { tab: null, personaje: r.key },
       })),
   );

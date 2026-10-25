@@ -11,6 +11,8 @@ export interface Bar {
   /** Enlace interno de la etiqueta ([] = misma página, útil con `query`). */
   link?: string[];
   query?: Record<string, string | null>;
+  /** Enlace externo (p. ej. a DeviantArt); tiene prioridad sobre `link`. */
+  href?: string;
 }
 
 /** Barras horizontales accesibles (HTML + CSS, sin librerías). */
@@ -23,7 +25,9 @@ export interface Bar {
       <ul class="bars" [attr.aria-label]="label()">
         @for (b of rows(); track b.label + $index) {
           <li class="bars__row" [class.bars__row--muted]="b.muted">
-            @if (b.link) {
+            @if (b.href) {
+              <a class="bars__label" [title]="b.label + ' (abre DeviantArt)'" [href]="b.href" target="_blank" rel="noopener noreferrer">{{ b.label }}</a>
+            } @else if (b.link) {
               <a class="bars__label" [title]="b.label" [routerLink]="b.link" [queryParams]="b.query ?? null">{{ b.label }}</a>
             } @else {
               <span class="bars__label" [title]="b.label">{{ b.label }}</span>

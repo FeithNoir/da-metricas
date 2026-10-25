@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, input, signal, untracked } from '@angular/core';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ApiService, errorMessage, isNotFound } from '../api.service';
 import { ago, dateTime, num, SYNC_STATUS } from '../format';
 import type { Analysis, ArtistResponse, SyncRecord, Work } from '../models';
@@ -11,7 +11,7 @@ type Tab = 'obras' | 'analisis';
 @Component({
   selector: 'app-artist-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [WorksTable, AnalysisView],
+  imports: [WorksTable, AnalysisView, RouterLink],
   template: `
     @if (state() === 'loading') {
       <p class="loading" aria-live="polite"><span class="spinner" aria-hidden="true"></span> Cargando a {{ username() }}…</p>
@@ -41,6 +41,7 @@ type Tab = 'obras' | 'analisis';
             {{ running() ? 'Sincronizando…' : data() ? 'Sincronizar de nuevo' : 'Sincronizar ahora' }}
           </button>
           @if (data() && works().length) {
+            <a class="btn" [routerLink]="['/tendencias']" [queryParams]="{ tab: 'contraste', artista: username() }">Comparar con tendencias</a>
             <a class="btn" [href]="csvHref()" download>Exportar CSV</a>
           }
           @if (data(); as d) {

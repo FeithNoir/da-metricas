@@ -79,6 +79,9 @@ export interface WorkRow {
   ageDays: number | null;
   viewsPerDay: number | null;
   favsPerDay: number | null;
+  franchises?: string[];
+  characters?: string[];
+  ratingClass?: RatingClass;
 }
 
 export interface Descriptive {
@@ -305,4 +308,215 @@ export interface Settings {
   maxIntervalHours: number;
   nextRunAt: string | null;
   lastRunAt: string | null;
+}
+
+// ───────────── Tendencias ─────────────
+export type BenchmarkKind = 'recent' | 'popular';
+
+export interface BenchmarkRun {
+  id: number;
+  kind: BenchmarkKind;
+  scope: string;
+  size: number;
+  startedAt: string;
+  finishedAt: string | null;
+  status: 'running' | 'ok' | 'partial' | 'error' | 'empty';
+  phase: string;
+  found: number;
+  processed: number;
+  failed: number;
+  message: string | null;
+  sources: string[];
+  items: number;
+}
+
+export interface BenchmarkItem {
+  id: string;
+  rank: number;
+  source: string;
+  url: string;
+  title: string;
+  author: string | null;
+  thumbnail: string | null;
+  publishedAt: string | null;
+  rating: string | null;
+  tags: string[];
+  views: number;
+  favourites: number;
+  comments: number;
+  downloads: number | null;
+  statsSource: 'oembed' | 'browse';
+  measuredAt: string;
+}
+
+export interface Estimate {
+  pages: number;
+  requests: number;
+  seconds: number;
+  megabytes: number;
+}
+
+export interface BenchmarkAuto {
+  enabled: boolean;
+  size: number;
+  scope: string;
+}
+
+export interface BenchmarkList {
+  runs: BenchmarkRun[];
+  running: BenchmarkRun | null;
+  minSize: number;
+  maxSize: number;
+  defaultSize: number;
+  generalTags: string[];
+  estimate: Estimate;
+  auto: BenchmarkAuto;
+  nextAutoRunAt: string | null;
+}
+
+export interface SampleExtras {
+  kind: BenchmarkKind;
+  scope: string;
+  measuredAt: string;
+  items: number;
+  withTags: number;
+  authors: number;
+  topAuthors: { author: string; count: number }[];
+  topAuthorShare: number | null;
+  ages: { medianAgeHours: number | null; minAgeHours: number | null; maxAgeHours: number | null; medianViewsPerHour: number | null };
+  spanMinutes: number | null;
+  uploadsPerMinute: number | null;
+  medianTagCount: number | null;
+  sources: { source: string; count: number; spanMinutes: number | null; perHour: number | null }[];
+  notes: string[];
+}
+
+export interface BenchmarkAnalysis {
+  run: BenchmarkRun;
+  analysis: Analysis;
+  extras: SampleExtras;
+  items: BenchmarkItem[];
+}
+
+export type GroupKey = 'artist' | 'artistScoped' | 'recent' | 'popular';
+
+export interface GroupSummary {
+  key: GroupKey;
+  label: string;
+  n: number;
+  medianViews: number | null;
+  meanViews: number | null;
+  medianFavourites: number | null;
+  medianComments: number | null;
+  medianFavRate: number | null;
+  medianCommentRate: number | null;
+  rateN: number;
+  favsPer100Views: number | null;
+  commentsPer100Views: number | null;
+  medianViewsPerDay: number | null;
+  medianAgeDays: number | null;
+  nsfwShare: number | null;
+  originalShare: number | null;
+  fanartShare: number | null;
+  unclassifiedShare: number | null;
+  medianTagCount: number | null;
+}
+
+export interface AgeCell {
+  n: number;
+  medianViews: number | null;
+  medianViewsPerDay: number | null;
+  medianFavourites: number | null;
+  lowSample: boolean;
+}
+
+export interface AgeBucketRow {
+  key: string;
+  label: string;
+  cells: Partial<Record<GroupKey, AgeCell>>;
+}
+
+export interface PercentileRow {
+  metric: 'views' | 'favourites' | 'viewsPerDay' | 'favRate';
+  label: string;
+  benchmark: 'recent' | 'popular';
+  artistMedian: number | null;
+  benchmarkMedian: number | null;
+  percentileOfMedian: number | null;
+  shareAboveMedian: number | null;
+  percentileOfBest: number | null;
+  n: number;
+}
+
+export interface ShareRow {
+  key: string;
+  label: string;
+  recentShare: number | null;
+  recentCount: number;
+  popularShare: number | null;
+  popularCount: number;
+  artistShare: number | null;
+  artistCount: number;
+  artistMedianViews: number | null;
+  artistLift: number | null;
+  sampling?: boolean;
+}
+
+export interface TimingRow {
+  key: string;
+  label: string;
+  artistCount: number;
+  artistShare: number | null;
+  artistMedianViews: number | null;
+  artistMedianViewsPerDay: number | null;
+  artistIndex: number | null;
+  popularShare: number | null;
+  recentShare: number | null;
+}
+
+export interface RatingMix {
+  key: GroupKey;
+  label: string;
+  n: number;
+  sfw: number;
+  nsfw: number;
+  nsfwShare: number | null;
+  sfwMedianViews: number | null;
+  nsfwMedianViews: number | null;
+}
+
+export type Confidence = 'alta' | 'media' | 'baja';
+
+export interface Advice {
+  id: string;
+  area: string;
+  title: string;
+  text: string;
+  evidence: { label: string; value: string }[];
+  confidence: Confidence;
+  n: number;
+  score: number;
+  tone: 'fortaleza' | 'oportunidad' | 'alerta' | 'info';
+}
+
+export interface Contrast {
+  generatedAt: string;
+  username: string;
+  timezone: string;
+  scope: string;
+  recent: { run: BenchmarkRun; extras: SampleExtras } | null;
+  popular: { run: BenchmarkRun; extras: SampleExtras } | null;
+  summary: GroupSummary[];
+  ageBuckets: AgeBucketRow[];
+  artistEarlyPoints: number;
+  percentiles: PercentileRow[];
+  tags: ShareRow[];
+  franchises: ShareRow[];
+  characters: ShareRow[];
+  timing: { weekdays: TimingRow[]; blocks: TimingRow[] };
+  ratingMix: RatingMix[];
+  ratingTest: { views: MannWhitney | null; viewsPerDay: MannWhitney | null; index: MannWhitney | null; nsfwIndex: number | null; sfwIndex: number | null } | null;
+  cadence: { months: number; spearman: number | null; last90Days: number; perMonth: { month: string; count: number; medianViewsPerDay: number | null }[] };
+  advice: Advice[];
+  notes: string[];
 }

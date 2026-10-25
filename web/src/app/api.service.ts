@@ -1,7 +1,18 @@
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import type { Analysis, Artist, ArtistResponse, ClassificationOverride, ClassificationRecord, DictionaryInfo, ReclassifyResult, Settings, SyncRecord, Work, WorkDetailResponse } from './models';
+import type {
+  Analysis,
+  Artist,
+  ArtistResponse,
+  BenchmarkAnalysis,
+  BenchmarkAuto,
+  BenchmarkKind,
+  BenchmarkList,
+  BenchmarkRun,
+  Contrast,
+  Estimate,
+  ClassificationOverride, ClassificationRecord, DictionaryInfo, ReclassifyResult, Settings, SyncRecord, Work, WorkDetailResponse } from './models';
 
 /** Mensaje en español a partir de un error HTTP. */
 export function errorMessage(e: unknown): string {
@@ -80,6 +91,35 @@ export class ApiService {
   }
   saveSettings(s: Partial<Pick<Settings, 'enabled' | 'intervalHours'>>) {
     return firstValueFrom(this.http.put<Settings>('/api/settings', s));
+  }
+  benchmarks() {
+    return firstValueFrom(this.http.get<BenchmarkList>('/api/benchmarks'));
+  }
+  benchmark(id: number) {
+    return firstValueFrom(this.http.get<{ run: BenchmarkRun }>(`/api/benchmarks/${id}`));
+  }
+  startBenchmark(body: { kind: BenchmarkKind; scope: string; size: number }) {
+    return firstValueFrom(this.http.post<{ run: BenchmarkRun }>('/api/benchmarks', body));
+  }
+  benchmarkAnalysis(id: number) {
+    return firstValueFrom(this.http.get<BenchmarkAnalysis>(`/api/benchmarks/${id}/analysis`));
+  }
+  deleteBenchmark(id: number) {
+    return firstValueFrom(this.http.delete<{ deleted: number }>(`/api/benchmarks/${id}`));
+  }
+  estimate(kind: BenchmarkKind, scope: string, size: number) {
+    const params = new HttpParams().set('kind', kind).set('scope', scope).set('size', size);
+    return firstValueFrom(this.http.get<Estimate & { size: number }>('/api/benchmarks/estimate', { params }));
+  }
+  saveBenchmarkAuto(s: Partial<BenchmarkAuto>) {
+    return firstValueFrom(this.http.put<BenchmarkList>('/api/benchmarks/settings', s));
+  }
+  contrast(username: string, q: { recent?: number | null; popular?: number | null; scope?: string | null } = {}) {
+    let params = new HttpParams();
+    if (q.recent) params = params.set('recent', q.recent);
+    if (q.popular) params = params.set('popular', q.popular);
+    if (q.scope) params = params.set('scope', q.scope);
+    return firstValueFrom(this.http.get<Contrast>(`/api/artists/${this.u(username)}/contrast`, { params }));
   }
   csvUrl(username: string, f: WorksFilter = {}) {
     let p = new HttpParams();
