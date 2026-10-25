@@ -76,8 +76,8 @@ export class PoliteClient {
     this.queue.shift()?.();
   }
 
-  /** GET con caché. `useCache: false` fuerza la descarga (pero guarda el resultado). */
-  async get(url: string, { useCache = true }: { useCache?: boolean } = {}): Promise<HttpResult> {
+  /** GET con caché. `useCache: false` fuerza la descarga (pero guarda el resultado, salvo `store: false`). */
+  async get(url: string, { useCache = true, store = true }: { useCache?: boolean; store?: boolean } = {}): Promise<HttpResult> {
     const db = this.options.db;
     if (useCache && db && this.opts.cacheTtlMinutes > 0) {
       const hit = db.cacheGet(url, this.opts.cacheTtlMinutes);
@@ -104,7 +104,7 @@ export class PoliteClient {
       this.release();
       if (res.ok) {
         if (isCloudflareChallenge(res, body)) throw new HttpError(403, url, `Cloudflare pidió verificación en ${url}; no se intenta saltar.`);
-        db?.cacheSet(url, body);
+        if (store) db?.cacheSet(url, body);
         return { status: res.status, body, fromCache: false };
       }
       if (RETRYABLE.has(res.status) && attempt < this.opts.maxRetries && !isCloudflareChallenge(res, body)) {

@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ratingClassOf } from './classifier/classify.js';
 import type { Evidence } from './classifier/classify.js';
-import type { Artist, DeviationDetail, DeviationWithMetrics, RatingClass, RssItem, Snapshot, SyncRecord, SyncStatus } from './types.js';
+import type { Artist, BenchmarkItem, BenchmarkKind, BenchmarkRun, DeviationDetail, DeviationWithMetrics, RatingClass, RssItem, Snapshot, SyncRecord, SyncStatus } from './types.js';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -88,6 +88,48 @@ export const MIGRATIONS: { version: number; up: (sql: DatabaseSync) => void }[] 
         );`);
     },
   },
+  {
+    // Tendencias: muestras de referencia de la plataforma (más recientes / más populares).
+    version: 2,
+    up: (sql) =>
+      sql.exec(`
+        CREATE TABLE IF NOT EXISTS benchmark_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          size INTEGER NOT NULL,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          status TEXT NOT NULL,
+          phase TEXT NOT NULL DEFAULT '',
+          found INTEGER NOT NULL DEFAULT 0,
+          processed INTEGER NOT NULL DEFAULT 0,
+          failed INTEGER NOT NULL DEFAULT 0,
+          message TEXT,
+          sources TEXT NOT NULL DEFAULT '[]'
+        );
+        CREATE INDEX IF NOT EXISTS benchmark_runs_kind ON benchmark_runs(kind, scope, started_at);
+        CREATE TABLE IF NOT EXISTS benchmark_items (
+          run_id INTEGER NOT NULL REFERENCES benchmark_runs(id) ON DELETE CASCADE,
+          deviation_id TEXT NOT NULL,
+          rank INTEGER NOT NULL,
+          source TEXT NOT NULL,
+          url TEXT NOT NULL,
+          title TEXT NOT NULL,
+          author TEXT,
+          thumbnail TEXT,
+          published_at TEXT,
+          rating TEXT,
+          tags TEXT NOT NULL DEFAULT '[]',
+          views INTEGER NOT NULL,
+          favourites INTEGER NOT NULL,
+          comments INTEGER NOT NULL,
+          downloads INTEGER,
+          stats_source TEXT NOT NULL,
+          measured_at TEXT NOT NULL,
+          PRIMARY KEY (run_id, deviation_id)
+        );`),
+  },
 ];
 export const SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -105,6 +147,25 @@ function toArtist(r: Row): Artist {
     createdAt: String(r['created_at']),
     lastSyncAt: s(r['last_sync_at']),
     lastSyncStatus: s(r['last_sync_status']) as SyncStatus | null,
+  };
+}
+
+function toBenchmark(r: Row): BenchmarkRun {
+  return {
+    id: Number(r['id']),
+    kind: String(r['kind']) as BenchmarkKind,
+    scope: String(r['scope']),
+    size: Number(r['size']),
+    startedAt: String(r['started_at']),
+    finishedAt: s(r['finished_at']),
+    status: String(r['status']) as BenchmarkRun['status'],
+    phase: String(r['phase'] ?? ''),
+    found: Number(r['found']),
+    processed: Number(r['processed']),
+    failed: Number(r['failed']),
+    message: s(r['message']),
+    sources: (parseList(r['sources']) as string[] | null) ?? [],
+    items: Number(r['items'] ?? 0),
   };
 }
 
@@ -383,6 +444,17 @@ export class Db {
     }));
   }
   /** Primer y último snapshot de cada obra del artista (para calcular crecimiento). */
+  /** Todos los snapshots de las obras de un artista (para comparar a igual edad). */
+  artistSnapshots(username: string): { id: string; takenAt: string; views: number; favourites: number; comments: number }[] {
+    return (
+      this.sql
+        .prepare(
+          `SELECT s.deviation_id, s.taken_at, s.views, s.favourites, s.comments FROM snapshots s JOIN deviations d ON d.id = s.deviation_id WHERE d.username = ? ORDER BY s.deviation_id, s.taken_at, s.id`,
+        )
+        .all(username) as Row[]
+    ).map((r) => ({ id: String(r['deviation_id']), takenAt: String(r['taken_at']), views: Number(r['views']), favourites: Number(r['favourites']), comments: Number(r['comments']) }));
+  }
+
   firstAndLast(username: string): { id: string; first: Snapshot; last: Snapshot }[] {
     const rows = this.sql
       .prepare(
@@ -427,6 +499,80 @@ export class Db {
   }
 
   // ---------- opciones ----------
+  // ---------- tendencias (muestras de referencia) ----------
+  startBenchmark(p: { kind: BenchmarkKind; scope: string; size: number }): BenchmarkRun {
+    const r = this.sql
+      .prepare("INSERT INTO benchmark_runs (kind, scope, size, started_at, status, phase) VALUES (?, ?, ?, ?, 'running', 'lista') RETURNING id")
+      .get(p.kind, p.scope, p.size, new Date().toISOString()) as Row;
+    return this.getBenchmark(Number(r['id']))!;
+  }
+  updateBenchmark(id: number, patch: Partial<Pick<BenchmarkRun, 'phase' | 'found' | 'processed' | 'failed' | 'message' | 'sources'>>) {
+    const cols: string[] = [];
+    const vals: (string | number | null)[] = [];
+    for (const [k, v] of Object.entries(patch)) {
+      cols.push(`${k} = ?`);
+      vals.push(k === 'sources' ? JSON.stringify(v) : (v as string | number | null));
+    }
+    if (cols.length) this.sql.prepare(`UPDATE benchmark_runs SET ${cols.join(', ')} WHERE id = ?`).run(...vals, id);
+  }
+  finishBenchmark(id: number, status: BenchmarkRun['status'], message: string | null) {
+    this.sql.prepare('UPDATE benchmark_runs SET status = ?, message = ?, finished_at = ? WHERE id = ?').run(status, message, new Date().toISOString(), id);
+  }
+  failStaleBenchmarks() {
+    this.sql.prepare("UPDATE benchmark_runs SET status = 'error', message = 'Interrumpida por reinicio del servidor', finished_at = ? WHERE status = 'running'").run(new Date().toISOString());
+  }
+  getBenchmark(id: number): BenchmarkRun | null {
+    const r = this.sql.prepare('SELECT r.*, (SELECT COUNT(*) FROM benchmark_items i WHERE i.run_id = r.id) AS items FROM benchmark_runs r WHERE id = ?').get(id) as Row | undefined;
+    return r ? toBenchmark(r) : null;
+  }
+  listBenchmarks(limit = 50, kind?: BenchmarkKind): BenchmarkRun[] {
+    const rows = this.sql
+      .prepare(`SELECT r.*, (SELECT COUNT(*) FROM benchmark_items i WHERE i.run_id = r.id) AS items FROM benchmark_runs r ${kind ? 'WHERE kind = ?' : ''} ORDER BY id DESC LIMIT ?`)
+      .all(...(kind ? [kind, limit] : [limit])) as Row[];
+    return rows.map(toBenchmark);
+  }
+  /** Última medición terminada (ok/parcial) de un tipo; si se indica, del mismo alcance. */
+  latestBenchmark(kind: BenchmarkKind, scope?: string): BenchmarkRun | null {
+    const r = this.sql
+      .prepare(
+        `SELECT r.*, (SELECT COUNT(*) FROM benchmark_items i WHERE i.run_id = r.id) AS items FROM benchmark_runs r
+         WHERE kind = ? AND status IN ('ok', 'partial') ${scope ? 'AND scope = ?' : ''} ORDER BY id DESC LIMIT 1`,
+      )
+      .get(...(scope ? [kind, scope] : [kind])) as Row | undefined;
+    return r ? toBenchmark(r) : null;
+  }
+  deleteBenchmark(id: number) {
+    return Number(this.sql.prepare('DELETE FROM benchmark_runs WHERE id = ?').run(id).changes) > 0;
+  }
+  saveBenchmarkItem(runId: number, it: BenchmarkItem) {
+    this.sql
+      .prepare(
+        `INSERT OR REPLACE INTO benchmark_items (run_id, deviation_id, rank, source, url, title, author, thumbnail, published_at, rating, tags, views, favourites, comments, downloads, stats_source, measured_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(runId, it.id, it.rank, it.source, it.url, it.title, it.author, it.thumbnail, it.publishedAt, it.rating, JSON.stringify(it.tags), it.views, it.favourites, it.comments, it.downloads, it.statsSource, it.measuredAt);
+  }
+  benchmarkItems(runId: number): BenchmarkItem[] {
+    return (this.sql.prepare('SELECT * FROM benchmark_items WHERE run_id = ? ORDER BY rank').all(runId) as Row[]).map((r) => ({
+      id: String(r['deviation_id']),
+      rank: Number(r['rank']),
+      source: String(r['source']),
+      url: String(r['url']),
+      title: String(r['title']),
+      author: s(r['author']),
+      thumbnail: s(r['thumbnail']),
+      publishedAt: s(r['published_at']),
+      rating: s(r['rating']),
+      tags: parseList(r['tags']) ?? [],
+      views: Number(r['views']),
+      favourites: Number(r['favourites']),
+      comments: Number(r['comments']),
+      downloads: n(r['downloads']),
+      statsSource: String(r['stats_source']),
+      measuredAt: String(r['measured_at']),
+    }));
+  }
+
   getSetting(key: string): string | null {
     const r = this.sql.prepare('SELECT value FROM settings WHERE key = ?').get(key) as Row | undefined;
     return r ? String(r['value']) : null;

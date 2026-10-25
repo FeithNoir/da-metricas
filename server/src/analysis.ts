@@ -92,7 +92,7 @@ function groupStats(groups: Map<string, { label: string; rows: WorkRow[] }>, min
   }));
 }
 
-function localParts(iso: string, tz: string) {
+export function localParts(iso: string, tz: string) {
   const d = new Date(iso);
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', weekday: 'short', hour: '2-digit', hourCycle: 'h23' }).formatToParts(d);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
@@ -174,8 +174,8 @@ export interface ArtistAnalysis {
   insights: string[];
 }
 
-const pct = (x: number | null, d = 1) => (x === null ? '—' : `${(x * 100).toFixed(d).replace('.', ',')} %`);
-const fmt = (x: number | null, d = 0) => (x === null ? '—' : x.toLocaleString('es-CO', { maximumFractionDigits: d }));
+export const pct = (x: number | null, d = 1) => (x === null ? '—' : `${(x * 100).toFixed(d).replace('.', ',')} %`);
+export const fmt = (x: number | null, d = 0) => (x === null ? '—' : x.toLocaleString('es-CO', { maximumFractionDigits: d }));
 
 export function analyzeArtist(
   devs: DeviationWithMetrics[],
@@ -579,7 +579,7 @@ export function analyzeClassification(
   };
 }
 
-const pval = (p: number) => (p < 0.001 ? 'p < 0,001' : `p = ${p.toFixed(3).replace('.', ',')}`);
+export const pval = (p: number) => (p < 0.001 ? 'p < 0,001' : `p = ${p.toFixed(3).replace('.', ',')}`);
 
 export function classificationInsights(c: ClassificationAnalysis, globalMedian: number | null): string[] {
   const out: string[] = [];

@@ -101,3 +101,49 @@ export interface Artist {
   lastSyncAt: string | null;
   lastSyncStatus: SyncStatus | null;
 }
+
+/** Tendencias: “recent” = lo más reciente de la plataforma; “popular” = lo más popular. */
+export type BenchmarkKind = 'recent' | 'popular';
+
+export interface BenchmarkRun {
+  id: number;
+  kind: BenchmarkKind;
+  /** 'general' (varias etiquetas amplias + portada) o una etiqueta concreta (p. ej. 'naruto'). */
+  scope: string;
+  /** Tamaño pedido (X). */
+  size: number;
+  startedAt: string;
+  finishedAt: string | null;
+  status: 'running' | 'ok' | 'partial' | 'error' | 'empty';
+  phase: string;
+  found: number;
+  processed: number;
+  failed: number;
+  message: string | null;
+  /** URLs públicas de las que salió la muestra. */
+  sources: string[];
+  /** Obras guardadas. */
+  items: number;
+}
+
+export interface BenchmarkItem {
+  id: string;
+  rank: number;
+  /** De dónde salió: 'portada' o la etiqueta. */
+  source: string;
+  url: string;
+  title: string;
+  author: string | null;
+  thumbnail: string | null;
+  publishedAt: string | null;
+  /** 'adult' / 'nonadult' (marca de DeviantArt). */
+  rating: string | null;
+  tags: string[];
+  views: number;
+  favourites: number;
+  comments: number;
+  downloads: number | null;
+  /** 'oembed' si se enriqueció con oEmbed; 'browse' si solo hay los datos de la página de exploración. */
+  statsSource: string;
+  measuredAt: string;
+}

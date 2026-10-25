@@ -40,7 +40,8 @@ describe('migración de la base SQLite', () => {
     const cols = (db.sql.prepare('PRAGMA table_info(deviations)').all() as { name: string }[]).map((c) => c.name);
     expect(cols).toContain('description');
     const tables = (db.sql.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((t) => t.name);
-    expect(tables).toEqual(expect.arrayContaining(['classifications', 'classification_overrides']));
+    expect(tables).toEqual(expect.arrayContaining(['classifications', 'classification_overrides', 'benchmark_runs', 'benchmark_items']));
+    expect(db.listBenchmarks()).toEqual([]);
     expect(db.listDeviations('feithnoir')).toHaveLength(2);
     expect(db.history('2').map((s) => s.views)).toEqual([1500, 1510]);
     expect(db.listSyncs('feithnoir')).toHaveLength(1);

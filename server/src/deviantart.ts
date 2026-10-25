@@ -1,4 +1,5 @@
 import { HttpError, type PoliteClient } from './http.js';
+import { parseBrowsePage, type BrowsePage } from './parsers/browse.js';
 import { parseOembed } from './parsers/oembed.js';
 import { parseDeviationPage, parseGalleryPage, type GalleryInfo } from './parsers/page.js';
 import { parseRssPage } from './parsers/rss.js';
@@ -46,6 +47,22 @@ export class DeviantArtClient {
       url = page.nextUrl;
     }
     return [...seen.values()];
+  }
+
+  /**
+   * Página pública de exploración (etiqueta o portada). Siempre fresca y sin guardar en caché:
+   * pesa ~1,3 MB y las cifras cambian a cada minuto.
+   */
+  async browse(url: string): Promise<BrowsePage> {
+    const res = await this.http.get(url, { useCache: false, store: false });
+    return parseBrowsePage(res.body);
+  }
+
+  /** Solo oEmbed (sin respaldo HTML): para enriquecer muestras de tendencias con etiquetas y la marca SFW/NSFW. */
+  async oembed(url: string): Promise<DeviationDetail> {
+    // Siempre fresco (la hora de medición debe ser real) y sin llenar la caché con cientos de obras ajenas.
+    const res = await this.http.get(oembedUrl(url), { useCache: false, store: false });
+    return parseOembed(res.body);
   }
 
   /** Métricas y etiquetas: oEmbed primero; si falla, la página pública de la obra como respaldo. */

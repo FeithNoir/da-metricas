@@ -1,5 +1,5 @@
 import type { DeviationDetail } from '../types.js';
-import { normalizeTags, toInt, toIso } from './text.js';
+import { fixMojibake, normalizeTags, toInt, toIso } from './text.js';
 
 type Node = Record<string, unknown>;
 
@@ -27,7 +27,7 @@ export function parseOembed(body: string): DeviationDetail {
   const rawTags = data['tags'];
   const tags = typeof rawTags === 'string' ? normalizeTags(rawTags.split(',')) : Array.isArray(rawTags) ? normalizeTags(rawTags.map(String)) : [];
   return {
-    title: typeof data['title'] === 'string' ? data['title'] : null,
+    title: typeof data['title'] === 'string' ? fixMojibake(data['title']) : null,
     author: typeof data['author_name'] === 'string' ? data['author_name'] : null,
     publishedAt: toIso(data['pubdate']),
     tags,

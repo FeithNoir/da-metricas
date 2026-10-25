@@ -88,7 +88,7 @@ interface CompiledFranchise {
   name: string;
   aliases: Alias[];
 }
-interface Compiled {
+export interface Compiled {
   franchises: CompiledFranchise[];
   characters: CompiledCharacter[];
   originalStrong: Alias[];

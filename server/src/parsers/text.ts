@@ -39,3 +39,13 @@ export function normalizeTags(tags: Iterable<string>): string[] {
   }
   return [...out];
 }
+
+/**
+ * Repara texto UTF-8 que llegó decodificado como Latin-1 (p. ej. “Â«” en lugar de “«”, “Ã©” en lugar de “é”), como devuelve a veces
+ * el oEmbed de DeviantArt. Solo cambia el texto si el resultado es UTF-8 válido y más corto.
+ */
+export function fixMojibake(s: string): string {
+  if (!/[ÂÃ][\u0080-\u00bf]/.test(s) || [...s].some((ch) => ch.charCodeAt(0) > 0xff)) return s;
+  const fixed = Buffer.from(s, 'latin1').toString('utf8');
+  return fixed.includes('\ufffd') || fixed.length >= s.length ? s : fixed;
+}

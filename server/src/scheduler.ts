@@ -39,6 +39,8 @@ export class AutoSyncScheduler {
     private readonly db: Db,
     private readonly sync: SyncService,
     private readonly log: (m: string) => void = () => {},
+    /** Tarea opcional después de sincronizar (p. ej. medir tendencias). */
+    private readonly after?: () => Promise<void>,
   ) {
     const last = db.getSetting('autosync.lastRunAt');
     this.lastRunAt = last ? new Date(last) : null;
@@ -94,6 +96,7 @@ export class AutoSyncScheduler {
         this.log(`[auto-sync] ${a.username}`);
         await this.sync.start(a.username).done;
       }
+      if (this.after) await this.after().catch((e: unknown) => this.log(`[auto-sync] ${(e as Error).message}`));
     } finally {
       this.runningNow = false;
       this.schedule();

@@ -199,3 +199,95 @@ describe('API REST: artista sin obras públicas', () => {
     await app.close();
   });
 });
+
+describe('API de tendencias', () => {
+  let app: FastifyInstance;
+  afterEach(async () => app?.close());
+
+  const oembed = fixture('oembed-invocation.json');
+  const base = fakeDeviantArt();
+  const route = fakeFetch((url) => {
+    if (url === 'https://www.deviantart.com/') return { body: fixture('browse-home.html') };
+    if (url.includes('/tag/') && url.includes('most-recent')) return { body: fixture('browse-recent.html') };
+    if (url.includes('/tag/') && url.includes('popular-all-time')) return { body: fixture('browse-popular.html') };
+    if (url.startsWith('https://backend.deviantart.com/oembed') && !url.includes('feithnoir')) return { body: oembed };
+    return undefined;
+  });
+  const fetch = (async (url: string, init?: RequestInit) => {
+    if (url.includes('/tag/')) await new Promise((res) => setTimeout(res, 20)); // medición “lenta” para probar el 409
+    const r = await route(url, init);
+    return r.status === 404 ? base(url, init) : r;
+  }) as typeof route;
+
+  async function waitRun(id: number) {
+    let r = (await app.inject(`/api/benchmarks/${id}`)).json().run;
+    for (let i = 0; i < 300 && r.status === 'running'; i++) {
+      await new Promise((res) => setTimeout(res, 10));
+      r = (await app.inject(`/api/benchmarks/${id}`)).json().run;
+    }
+    return r;
+  }
+
+  it('valida, mide, analiza, contrasta y borra', async () => {
+    app = await buildApp({ dbFile: ':memory:', fetch, delayMs: 0, maxRetries: 1, sleep: async () => {} });
+    const info = (await app.inject('/api/benchmarks')).json();
+    expect(info).toMatchObject({ runs: [], running: null, minSize: 24, maxSize: 300, defaultSize: 100 });
+    expect(info.estimate.requests).toBe(109);
+    expect((await app.inject('/api/benchmarks/estimate?size=300&kind=popular&scope=naruto')).json()).toMatchObject({ size: 300, pages: 13, requests: 313 });
+
+    const bad = await app.inject({ method: 'POST', url: '/api/benchmarks', payload: { kind: 'recent', size: 9999 } });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toMatch(/entre 24 y 300/);
+    expect((await app.inject({ method: 'POST', url: '/api/benchmarks', payload: { kind: 'nuevo' } })).statusCode).toBe(400);
+    expect((await app.inject('/api/benchmarks/999')).statusCode).toBe(404);
+    expect((await app.inject('/api/benchmarks/abc/analysis')).statusCode).toBe(404);
+
+    // Sin artista → 404; artista sin mediciones → 409
+    expect((await app.inject('/api/artists/feithnoir/contrast')).statusCode).toBe(404);
+    const s = (await app.inject({ method: 'POST', url: '/api/artists/feithnoir/sync' })).json().sync;
+    for (let i = 0; i < 200 && (await app.inject(`/api/syncs/${s.id}`)).json().sync.status === 'running'; i++) await new Promise((r) => setTimeout(r, 10));
+    const none = await app.inject('/api/artists/feithnoir/contrast');
+    expect(none.statusCode).toBe(409);
+    expect(none.json().error).toMatch(/Mide Recientes o Populares/);
+
+    const started = await app.inject({ method: 'POST', url: '/api/benchmarks', payload: { kind: 'recent', scope: 'Fan Art', size: 24 } });
+    expect(started.statusCode).toBe(202);
+    const runId = started.json().run.id;
+    expect(started.json().run).toMatchObject({ kind: 'recent', scope: 'fanart', size: 24, status: 'running' });
+    const busy = await app.inject({ method: 'POST', url: '/api/benchmarks', payload: { kind: 'popular' } });
+    expect(busy.statusCode).toBe(409);
+    const rec = await waitRun(runId);
+    expect(rec).toMatchObject({ status: 'partial', items: 6 });
+
+    const pop = await waitRun((await app.inject({ method: 'POST', url: '/api/benchmarks', payload: { kind: 'popular', size: 24 } })).json().run.id);
+    expect(pop.status).toMatch(/ok|partial/);
+
+    const an = (await app.inject(`/api/benchmarks/${runId}/analysis`)).json();
+    expect(an.run.id).toBe(runId);
+    expect(an.analysis.works).toBe(6);
+    expect(an.extras).toMatchObject({ kind: 'recent', scope: 'fanart', items: 6 });
+    expect(an.items).toHaveLength(6);
+    expect(an.items[0]).toHaveProperty('url');
+
+    const list = (await app.inject('/api/benchmarks')).json();
+    expect(list.runs.map((r: { id: number }) => r.id)).toEqual([pop.id, runId]);
+
+    const c = (await app.inject('/api/artists/feithnoir/contrast')).json();
+    expect(c.username).toBe('feithnoir');
+    expect(c.recent.run.id).toBe(runId); // si no hay general de Recientes, usa la última
+    expect(c.popular.run.id).toBe(pop.id);
+    expect(c.summary.map((x: { key: string }) => x.key)).toEqual(['artist', 'recent', 'popular']);
+    expect(Array.isArray(c.advice)).toBe(true);
+    expect((await app.inject(`/api/artists/feithnoir/contrast?recent=${pop.id}`)).statusCode).toBe(400);
+    const scoped = (await app.inject(`/api/artists/feithnoir/contrast?recent=${runId}&scope=fanart`)).json();
+    expect(scoped.scope).toBe('fanart');
+
+    // Ajustes automáticos
+    expect((await app.inject({ method: 'PUT', url: '/api/benchmarks/settings', payload: { size: 3 } })).statusCode).toBe(400);
+    const set = (await app.inject({ method: 'PUT', url: '/api/benchmarks/settings', payload: { enabled: true, size: 48 } })).json();
+    expect(set.auto).toEqual({ enabled: true, size: 48, scope: 'general' });
+
+    expect((await app.inject({ method: 'DELETE', url: `/api/benchmarks/${runId}` })).json()).toEqual({ deleted: runId });
+    expect((await app.inject(`/api/benchmarks/${runId}`)).statusCode).toBe(404);
+  });
+});

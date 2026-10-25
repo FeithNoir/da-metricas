@@ -9,9 +9,25 @@ import { toCsv } from './csv.js';
 import { Db } from './db.js';
 import { DeviantArtClient, USERNAME_RE } from './deviantart.js';
 import { PoliteClient, type FetchLike } from './http.js';
+import {
+  BENCHMARK_DEFAULT_SIZE,
+  BENCHMARK_MAX_SIZE,
+  BENCHMARK_MIN_SIZE,
+  BenchmarkService,
+  DEFAULT_AUTO,
+  estimateCost,
+  GENERAL_TAGS,
+  normalizeScope,
+  planSources,
+  validateAutoSettings,
+  validateBenchmarkParams,
+  type BenchmarkAutoSettings,
+} from './benchmark.js';
+import { analyzeBenchmark, buildContrast } from './trends.js';
+import { compileDictionary } from './classifier/classify.js';
 import { AutoSyncScheduler, MAX_INTERVAL_HOURS, MIN_INTERVAL_HOURS } from './scheduler.js';
 import { SyncService } from './sync.js';
-import type { DeviationWithMetrics } from './types.js';
+import type { BenchmarkKind, BenchmarkRun, DeviationWithMetrics } from './types.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -19,6 +35,7 @@ declare module 'fastify' {
     syncService: SyncService;
     scheduler: AutoSyncScheduler;
     classification: ClassificationService;
+    benchmarks: BenchmarkService;
   }
 }
 
@@ -97,19 +114,37 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   const app = Fastify({ logger: opts.logger ?? false });
   const db = new Db(opts.dbFile ?? config.dbFile);
   db.failStaleSyncs();
+  db.failStaleBenchmarks();
   db.cachePrune(24 * 60);
   const http = new PoliteClient({ db, fetch: opts.fetch, delayMs: opts.delayMs, maxRetries: opts.maxRetries, sleep: opts.sleep });
   const classification = new ClassificationService(db);
-  const syncService = new SyncService(db, new DeviantArtClient(http), { log: opts.log, onFinished: (u) => classification.reclassify(u) });
+  const da = new DeviantArtClient(http);
+  const benchmarks = new BenchmarkService(db, da, { log: opts.log });
+  const syncService = new SyncService(db, da, { log: opts.log, onFinished: (u) => classification.reclassify(u) });
   // Tras la migración: descripciones desde el RSS en caché (sin peticiones) y clasificación con el diccionario actual.
   const filled = classification.backfillFromCache();
   for (const a of db.listArtists()) classification.ensure(a.username);
   if (filled) opts.log?.(`[clasificación] ${filled} descripciones recuperadas de la caché`);
-  const scheduler = new AutoSyncScheduler(db, syncService, opts.log);
+  const autoBenchmarks = (): BenchmarkAutoSettings => {
+    try {
+      return { ...DEFAULT_AUTO, ...(JSON.parse(db.getSetting('benchmarks.auto') ?? '{}') as Partial<BenchmarkAutoSettings>) };
+    } catch {
+      return DEFAULT_AUTO;
+    }
+  };
+  const scheduler = new AutoSyncScheduler(db, syncService, opts.log, async () => {
+    const s = autoBenchmarks();
+    if (!s.enabled) return;
+    for (const kind of ['recent', 'popular'] as const) {
+      opts.log?.(`[auto-sync] tendencias ${kind}/${s.scope}`);
+      await benchmarks.start({ kind, scope: s.scope, size: s.size }).done;
+    }
+  });
   app.decorate('db', db);
   app.decorate('syncService', syncService);
   app.decorate('scheduler', scheduler);
   app.decorate('classification', classification);
+  app.decorate('benchmarks', benchmarks);
   if (opts.scheduler) scheduler.start();
   app.addHook('onClose', async () => {
     scheduler.stop();
@@ -322,6 +357,108 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     }
     return settingsResponse();
   });
+
+  // ───────────── Tendencias (muestras Recientes / Populares) ─────────────
+  const compiledGeneric = () => compileDictionary(classification.dictionary(), '');
+  const benchOr404 = (raw: string, reply: FastifyReply): BenchmarkRun | null => {
+    const id = Number(raw);
+    const b = Number.isInteger(id) ? db.getBenchmark(id) : null;
+    if (!b) void reply.code(404).send({ error: 'Medición de tendencias no encontrada.' });
+    return b;
+  };
+  const benchmarkInfo = () => ({
+    minSize: BENCHMARK_MIN_SIZE,
+    maxSize: BENCHMARK_MAX_SIZE,
+    defaultSize: BENCHMARK_DEFAULT_SIZE,
+    generalTags: GENERAL_TAGS,
+    estimate: estimateCost(BENCHMARK_DEFAULT_SIZE, opts.delayMs ?? config.delayMs, 2, planSources('recent', 'general').length),
+    auto: autoBenchmarks(),
+    nextAutoRunAt: autoBenchmarks().enabled ? (scheduler.nextRunAt?.toISOString() ?? null) : null,
+  });
+  app.get('/api/benchmarks', async () => ({ runs: db.listBenchmarks(60), running: benchmarks.running, ...benchmarkInfo() }));
+  app.get<{ Querystring: { size?: string; kind?: string; scope?: string } }>('/api/benchmarks/estimate', async (req) => {
+    const size = Math.min(BENCHMARK_MAX_SIZE, Math.max(BENCHMARK_MIN_SIZE, Math.round(Number(req.query.size)) || BENCHMARK_DEFAULT_SIZE));
+    const kind: BenchmarkKind = req.query.kind === 'popular' ? 'popular' : 'recent';
+    const scope = normalizeScope(req.query.scope);
+    return { size, kind, scope, ...estimateCost(size, opts.delayMs ?? config.delayMs, 2, planSources(kind, scope).length) };
+  });
+  app.post('/api/benchmarks', async (req, reply) => {
+    let p;
+    try {
+      p = validateBenchmarkParams(req.body);
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+    const { run, reused } = benchmarks.start(p);
+    if (reused)
+      return reply.code(409).send({ error: 'Ya hay una medición de tendencias en curso: espera a que termine.', run });
+    return reply.code(202).send({ run });
+  });
+  app.get('/api/benchmarks/settings', async () => benchmarkInfo());
+  app.put('/api/benchmarks/settings', async (req, reply) => {
+    try {
+      db.setSetting('benchmarks.auto', JSON.stringify(validateAutoSettings(req.body, autoBenchmarks())));
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+    return benchmarkInfo();
+  });
+  app.get<{ Params: { id: string } }>('/api/benchmarks/:id', async (req, reply) => {
+    const b = benchOr404(req.params.id, reply);
+    if (!b) return reply;
+    return { run: b };
+  });
+  app.get<{ Params: { id: string } }>('/api/benchmarks/:id/analysis', async (req, reply) => {
+    const b = benchOr404(req.params.id, reply);
+    if (!b) return reply;
+    const items = db.benchmarkItems(b.id);
+    if (!items.length) return reply.code(409).send({ error: b.status === 'running' ? 'La medición aún no tiene obras: espera un momento.' : 'Esta medición no tiene obras.', run: b });
+    return { ...analyzeBenchmark(b, items, compiledGeneric(), classification.characterFranchises()), items };
+  });
+  app.delete<{ Params: { id: string } }>('/api/benchmarks/:id', async (req, reply) => {
+    const b = benchOr404(req.params.id, reply);
+    if (!b) return reply;
+    if (b.status === 'running') return reply.code(409).send({ error: 'No se puede borrar una medición en curso.' });
+    db.deleteBenchmark(b.id);
+    return { deleted: b.id };
+  });
+  app.get<{ Params: { username: string }; Querystring: { recent?: string; popular?: string; scope?: string } }>(
+    '/api/artists/:username/contrast',
+    async (req, reply) => {
+      const u = userOr400(req.params.username, reply);
+      if (!u) return reply;
+      if (!artistOr404(u, reply)) return reply;
+      const scope = req.query.scope ? normalizeScope(req.query.scope) : undefined;
+      const pick = (kind: BenchmarkKind, raw?: string): BenchmarkRun | null | 'bad' => {
+        if (raw) {
+          const b = db.getBenchmark(Number(raw));
+          return b && b.kind === kind && b.status !== 'running' ? b : 'bad';
+        }
+        return scope ? db.latestBenchmark(kind, scope) : (db.latestBenchmark(kind, 'general') ?? db.latestBenchmark(kind));
+      };
+      const r = pick('recent', req.query.recent);
+      const p = pick('popular', req.query.popular);
+      if (r === 'bad' || p === 'bad') return reply.code(400).send({ error: 'Medición inválida: usa el id de una medición terminada del tipo correcto.' });
+      if (!r && !p) return reply.code(409).send({ error: 'Aún no hay mediciones de tendencias. Mide Recientes o Populares primero.' });
+      classification.ensure(u);
+      const compiled = compiledGeneric();
+      const cf = classification.characterFranchises();
+      const load = (b: BenchmarkRun | null) => {
+        if (!b) return null;
+        const items = db.benchmarkItems(b.id);
+        return items.length ? { run: b, items, extras: analyzeBenchmark(b, items, compiled, cf).extras } : null;
+      };
+      return buildContrast({
+        username: u,
+        artistWorks: db.listDeviations(u),
+        artistSnapshots: db.artistSnapshots(u),
+        recent: load(r),
+        popular: load(p),
+        compiled,
+        scope,
+      });
+    },
+  );
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'Ruta no encontrada.' });
