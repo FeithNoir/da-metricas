@@ -48,6 +48,7 @@ export function parseRssPage(xml: string): RssPage {
       author: credits.find((c) => c && !c.startsWith('http')) ?? null,
       rating: text(it['media:rating']) || null,
       keywords: keywords ? normalizeTags(keywords.split(',')) : [],
+      description: text(it['media:description']).slice(0, 4000) || null,
     });
   }
   return {

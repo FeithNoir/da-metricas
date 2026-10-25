@@ -1,5 +1,6 @@
-import { ageInDays, describe, iqrFences, mean, median, pearson, percentileRank, rate, spearman, stdDev, zScore, type Descriptive } from './stats.js';
-import type { DeviationWithMetrics, Snapshot } from './types.js';
+import { ORIGINAL, UNCLASSIFIED } from './classifier/classify.js';
+import { ageInDays, describe, iqrFences, mannWhitney, mean, median, pearson, percentileRank, rate, spearman, stdDev, zScore, type Descriptive, type MannWhitney } from './stats.js';
+import type { DeviationWithMetrics, RatingClass, Snapshot } from './types.js';
 
 export const TIMEZONE = process.env.TZ_ANALYSIS ?? 'America/Bogota';
 /** Etiquetas con menos obras que esto se marcan como “muestra pequeña”. */
@@ -26,6 +27,9 @@ export interface WorkRow {
   ageDays: number | null;
   viewsPerDay: number | null;
   favsPerDay: number | null;
+  franchises: string[];
+  characters: string[];
+  ratingClass: RatingClass;
 }
 
 export type MetricKey = 'views' | 'favourites' | 'comments' | 'favRate' | 'commentRate' | 'viewsPerDay' | 'favsPerDay';
@@ -51,6 +55,9 @@ export function toWorkRows(devs: DeviationWithMetrics[], now = new Date()): Work
         ageDays: age,
         viewsPerDay: age ? d.views / age : null,
         favsPerDay: age ? d.favourites / age : null,
+        franchises: d.franchises ?? [],
+        characters: d.characters ?? [],
+        ratingClass: d.ratingClass ?? 'desconocido',
       };
     });
 }
@@ -163,6 +170,7 @@ export interface ArtistAnalysis {
   byHour: GroupStat[];
   growth: null | { from: string; to: string; works: number; views: number; favourites: number; comments: number; top: GrowthEntry[] };
   timeline: { takenAt: string; views: number; favourites: number; comments: number; works: number }[];
+  classification: ClassificationAnalysis;
   insights: string[];
 }
 
@@ -171,7 +179,16 @@ const fmt = (x: number | null, d = 0) => (x === null ? '—' : x.toLocaleString(
 
 export function analyzeArtist(
   devs: DeviationWithMetrics[],
-  opts: { now?: Date; firstLast?: { id: string; first: Snapshot; last: Snapshot }[]; timeline?: ArtistAnalysis['timeline']; tz?: string } = {},
+  opts: {
+    now?: Date;
+    firstLast?: { id: string; first: Snapshot; last: Snapshot }[];
+    timeline?: ArtistAnalysis['timeline'];
+    tz?: string;
+    /** Personaje → franquicia según el diccionario. */
+    characterFranchise?: Record<string, string>;
+    overrides?: number;
+    dictionaryHash?: string | null;
+  } = {},
 ): ArtistAnalysis {
   const now = opts.now ?? new Date();
   const tz = opts.tz ?? TIMEZONE;
@@ -271,6 +288,12 @@ export function analyzeArtist(
     byHour: groupStats(byHour, 3).sort(sortKey),
     growth,
     timeline: opts.timeline ?? [],
+    classification: analyzeClassification(rows, {
+      tz,
+      characterFranchise: opts.characterFranchise ?? {},
+      overrides: opts.overrides ?? 0,
+      dictionaryHash: opts.dictionaryHash ?? null,
+    }),
     insights: [],
   };
   analysis.insights = buildInsights(analysis);
@@ -305,6 +328,7 @@ export function buildInsights(a: ArtistAnalysis): string[] {
   if (bestTag) out.push(`Entre las etiquetas con al menos ${a.tags.minWorks} obras, “${bestTag.label}” tiene el mayor promedio de vistas (${fmt(bestTag.meanViews)} en ${bestTag.count} obras).`);
   const wd = a.byWeekday.filter((w) => w.count >= 5).sort((x, y) => (y.medianViews ?? 0) - (x.medianViews ?? 0))[0];
   if (wd) out.push(`Por día de publicación (hora de ${a.timezone === "America/Bogota" ? "Bogotá" : a.timezone}), el ${wd.label} tiene la mediana de vistas más alta (${fmt(wd.medianViews)}, ${wd.count} obras).`);
+  out.push(...classificationInsights(a.classification, v.median));
   if (a.growth) out.push(`Entre sincronizaciones se ganaron ${fmt(a.growth.views)} vistas y ${fmt(a.growth.favourites)} favoritos en ${fmt(a.growth.works)} obras.`);
   return out;
 }
@@ -336,4 +360,249 @@ export function workDetail(target: DeviationWithMetrics, all: DeviationWithMetri
   }
   const rankOf = (k: 'views' | 'favourites' | 'comments') => 1 + rows.filter((r) => r[k] > work[k]).length;
   return { work, rank: { views: rankOf('views'), favourites: rankOf('favourites'), comments: rankOf('comments') }, percentiles, zScores, artistMedians, peers: rows.length };
+}
+
+// ======================= Franquicias, personajes y SFW/NSFW =======================
+
+/** Categorías (franquicia, personaje o clasificación) con menos obras que esto se marcan como “muestra pequeña”. */
+export const MIN_CATEGORY_WORKS = 5;
+export const RATING_LABEL: Record<RatingClass, string> = { sfw: 'SFW', nsfw: 'NSFW', desconocido: 'Desconocido' };
+
+export interface TopWork {
+  id: string;
+  title: string;
+  url: string;
+  views: number;
+  favourites: number;
+}
+
+/** Estadística de una categoría (misma lógica que el resto del análisis: medianas, tasas con ≥ 30 vistas, muestra pequeña). */
+export interface CategoryStat {
+  key: string;
+  label: string;
+  count: number;
+  /** Fracción de las obras analizadas (multi-etiqueta: las fracciones pueden sumar más de 1). */
+  share: number;
+  totalViews: number;
+  /** Fracción de las vistas totales del artista. */
+  viewsShare: number;
+  medianViews: number | null;
+  meanViews: number | null;
+  totalFavourites: number;
+  medianFavourites: number | null;
+  meanFavourites: number | null;
+  totalComments: number;
+  medianComments: number | null;
+  meanComments: number | null;
+  medianFavRate: number | null;
+  meanFavRate: number | null;
+  medianViewsPerDay: number | null;
+  /** Fracción NSFW dentro de la categoría (entre las de clasificación conocida). */
+  nsfwShare: number | null;
+  lowSample: boolean;
+  /** Para personajes: franquicia a la que pertenece. */
+  franchise?: string | null;
+  top: TopWork[];
+}
+
+export interface RatingCell {
+  count: number;
+  medianViews: number | null;
+  medianFavRate: number | null;
+  medianViewsPerDay: number | null;
+  lowSample: boolean;
+}
+
+export interface ClassificationAnalysis {
+  minWorks: number;
+  dictionaryHash: string | null;
+  coverage: {
+    works: number;
+    withFranchise: number;
+    /** Con franquicia distinta de “Original”. */
+    fanart: number;
+    original: number;
+    unclassified: number;
+    withCharacter: number;
+    multiFranchise: number;
+    overrides: number;
+    franchisesDistinct: number;
+    charactersDistinct: number;
+  };
+  franchises: CategoryStat[];
+  characters: CategoryStat[];
+  ratings: CategoryStat[];
+  /** SFW vs NSFW: prueba de Mann–Whitney sobre vistas, favoritos/vistas y vistas por día. */
+  ratingTest: null | { views: MannWhitney | null; favRate: MannWhitney | null; viewsPerDay: MannWhitney | null };
+  /** ratio = mediana NSFW ÷ mediana SFW; solo si ambos grupos tienen al menos MIN_CATEGORY_WORKS obras. */
+  franchiseByRating: { key: string; label: string; count: number; sfw: RatingCell; nsfw: RatingCell; ratio: number | null }[];
+  franchiseByYear: { years: string[]; series: { key: string; label: string; counts: number[]; medianViews: (number | null)[]; total: number }[] };
+  topCharactersByMedian: CategoryStat[];
+}
+
+function topWorks(rows: WorkRow[], n = 3): TopWork[] {
+  return [...rows]
+    .sort((a, b) => b.views - a.views)
+    .slice(0, n)
+    .map((r) => ({ id: r.id, title: r.title, url: r.url, views: r.views, favourites: r.favourites }));
+}
+
+function categoryStat(key: string, label: string, rows: WorkRow[], all: { works: number; views: number }, minWorks: number): CategoryStat {
+  const totalViews = rows.reduce((a, r) => a + r.views, 0);
+  const known = rows.filter((r) => r.ratingClass !== 'desconocido');
+  return {
+    key,
+    label,
+    count: rows.length,
+    share: all.works ? rows.length / all.works : 0,
+    totalViews,
+    viewsShare: all.views ? totalViews / all.views : 0,
+    medianViews: median(vals(rows, 'views')),
+    meanViews: mean(vals(rows, 'views')),
+    totalFavourites: rows.reduce((a, r) => a + r.favourites, 0),
+    medianFavourites: median(vals(rows, 'favourites')),
+    meanFavourites: mean(vals(rows, 'favourites')),
+    totalComments: rows.reduce((a, r) => a + r.comments, 0),
+    medianComments: median(vals(rows, 'comments')),
+    meanComments: mean(vals(rows, 'comments')),
+    medianFavRate: median(vals(rows, 'favRate')),
+    meanFavRate: mean(vals(rows, 'favRate')),
+    medianViewsPerDay: median(vals(rows, 'viewsPerDay')),
+    nsfwShare: known.length ? known.filter((r) => r.ratingClass === 'nsfw').length / known.length : null,
+    lowSample: rows.length < minWorks,
+    top: topWorks(rows),
+  };
+}
+
+function ratingCell(rows: WorkRow[], minWorks: number): RatingCell {
+  return {
+    count: rows.length,
+    medianViews: median(vals(rows, 'views')),
+    medianFavRate: median(vals(rows, 'favRate')),
+    medianViewsPerDay: median(vals(rows, 'viewsPerDay')),
+    lowSample: rows.length < minWorks,
+  };
+}
+
+/** Orden de rankings: primero las categorías con muestra suficiente, luego por mediana de vistas. */
+const byReliableMedian = (a: CategoryStat, b: CategoryStat) => Number(a.lowSample) - Number(b.lowSample) || (b.medianViews ?? 0) - (a.medianViews ?? 0);
+
+export function analyzeClassification(
+  rows: WorkRow[],
+  opts: { tz?: string; characterFranchise?: Record<string, string>; overrides?: number; dictionaryHash?: string | null; minWorks?: number } = {},
+): ClassificationAnalysis {
+  const minWorks = opts.minWorks ?? MIN_CATEGORY_WORKS;
+  const tz = opts.tz ?? TIMEZONE;
+  const all = { works: rows.length, views: rows.reduce((a, r) => a + r.views, 0) };
+  const group = (keyOf: (r: WorkRow) => string[]) => {
+    const m = new Map<string, WorkRow[]>();
+    for (const r of rows) for (const k of keyOf(r)) (m.get(k) ?? m.set(k, []).get(k)!).push(r);
+    return m;
+  };
+  const frGroups = group((r) => (r.franchises.length ? r.franchises : [UNCLASSIFIED]));
+  const franchises = [...frGroups]
+    .map(([k, rs]) => categoryStat(k, k, rs, all, minWorks))
+    .sort((a, b) => b.count - a.count || (b.medianViews ?? 0) - (a.medianViews ?? 0));
+  const chGroups = group((r) => r.characters);
+  const characters = [...chGroups]
+    .map(([k, rs]) => {
+      const st = categoryStat(k, k, rs, all, minWorks);
+      // Franquicia del diccionario; si el personaje vino de una corrección manual, la más común entre sus obras.
+      const fromDict = opts.characterFranchise?.[k];
+      const counts = new Map<string, number>();
+      for (const r of rs) for (const f of r.franchises) counts.set(f, (counts.get(f) ?? 0) + 1);
+      st.franchise = fromDict ?? [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+      return st;
+    })
+    .sort((a, b) => b.count - a.count || (b.medianViews ?? 0) - (a.medianViews ?? 0));
+  const order: RatingClass[] = ['sfw', 'nsfw', 'desconocido'];
+  const ratings = order
+    .map((k) => categoryStat(k, RATING_LABEL[k], rows.filter((r) => r.ratingClass === k), all, minWorks))
+    .filter((r) => r.count > 0 || r.key !== 'desconocido');
+  const sfw = rows.filter((r) => r.ratingClass === 'sfw');
+  const nsfw = rows.filter((r) => r.ratingClass === 'nsfw');
+  const ratingTest =
+    sfw.length >= 3 && nsfw.length >= 3
+      ? {
+          views: mannWhitney(vals(nsfw, 'views'), vals(sfw, 'views')),
+          favRate: mannWhitney(vals(nsfw, 'favRate'), vals(sfw, 'favRate')),
+          viewsPerDay: mannWhitney(vals(nsfw, 'viewsPerDay'), vals(sfw, 'viewsPerDay')),
+        }
+      : null;
+
+  // SFW vs NSFW dentro de cada franquicia (con al menos minWorks obras en total).
+  const franchiseByRating = franchises
+    .filter((f) => f.count >= minWorks)
+    .map((f) => {
+      const rs = frGroups.get(f.key)!;
+      const s = ratingCell(rs.filter((r) => r.ratingClass === 'sfw'), minWorks);
+      const n = ratingCell(rs.filter((r) => r.ratingClass === 'nsfw'), minWorks);
+      return { key: f.key, label: f.label, count: f.count, sfw: s, nsfw: n, ratio: !s.lowSample && !n.lowSample && s.medianViews && n.medianViews !== null ? n.medianViews / s.medianViews : null };
+    });
+
+  // Tendencia por año de las franquicias más frecuentes (excluye “Sin clasificar”).
+  const yearOf = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric' }).format(new Date(iso));
+  const years = [...new Set(rows.filter((r) => r.publishedAt).map((r) => yearOf(r.publishedAt!)))].sort();
+  const topFr = franchises.filter((f) => f.key !== UNCLASSIFIED).slice(0, 8);
+  const franchiseByYear = {
+    years,
+    series: topFr.map((f) => {
+      const rs = frGroups.get(f.key)!.filter((r) => r.publishedAt);
+      const byY = years.map((y) => rs.filter((r) => yearOf(r.publishedAt!) === y));
+      return { key: f.key, label: f.label, counts: byY.map((g) => g.length), medianViews: byY.map((g) => median(vals(g, 'views'))), total: f.count };
+    }),
+  };
+
+  const withFranchise = rows.filter((r) => r.franchises.length).length;
+  return {
+    minWorks,
+    dictionaryHash: opts.dictionaryHash ?? null,
+    coverage: {
+      works: rows.length,
+      withFranchise,
+      fanart: rows.filter((r) => r.franchises.some((f) => f !== ORIGINAL)).length,
+      original: rows.filter((r) => r.franchises.includes(ORIGINAL)).length,
+      unclassified: rows.length - withFranchise,
+      withCharacter: rows.filter((r) => r.characters.length).length,
+      multiFranchise: rows.filter((r) => r.franchises.length > 1).length,
+      overrides: opts.overrides ?? 0,
+      franchisesDistinct: franchises.filter((f) => f.key !== UNCLASSIFIED).length,
+      charactersDistinct: characters.length,
+    },
+    franchises,
+    characters: characters.slice(0, 150),
+    ratings,
+    ratingTest,
+    franchiseByRating,
+    franchiseByYear,
+    topCharactersByMedian: characters.filter((c) => c.count >= 2).sort(byReliableMedian).slice(0, 20),
+  };
+}
+
+const pval = (p: number) => (p < 0.001 ? 'p < 0,001' : `p = ${p.toFixed(3).replace('.', ',')}`);
+
+export function classificationInsights(c: ClassificationAnalysis, globalMedian: number | null): string[] {
+  const out: string[] = [];
+  const cv = c.coverage;
+  if (!cv.works) return out;
+  out.push(
+    `El ${pct(cv.withFranchise / cv.works, 0)} de las obras tiene franquicia identificada (${fmt(cv.fanart)} con alguna franquicia o fuente y ${fmt(cv.original)} originales); ${fmt(cv.unclassified)} quedan sin clasificar.`,
+  );
+  const best = c.franchises.filter((f) => !f.lowSample && f.key !== UNCLASSIFIED).sort(byReliableMedian)[0];
+  if (best)
+    out.push(
+      `Entre las franquicias con al menos ${c.minWorks} obras, ${best.label} tiene la mejor mediana de vistas (${fmt(best.medianViews)} en ${best.count} obras${globalMedian !== null ? `, frente a ${fmt(globalMedian)} del total` : ''}).`,
+    );
+  const s = c.ratings.find((r) => r.key === 'sfw');
+  const n = c.ratings.find((r) => r.key === 'nsfw');
+  if (s?.count && n?.count) {
+    const t = c.ratingTest?.views;
+    out.push(
+      `Las obras NSFW (${fmt(n.count)}) tienen una mediana de ${fmt(n.medianViews)} vistas frente a ${fmt(s.medianViews)} de las SFW (${fmt(s.count)})` +
+        (t ? `; la diferencia ${t.p < 0.05 ? 'es estadísticamente significativa' : 'no es estadísticamente significativa'} (Mann–Whitney, ${pval(t.p)}).` : '.'),
+    );
+  }
+  const ch = c.topCharactersByMedian.find((x) => !x.lowSample);
+  if (ch) out.push(`El personaje con mejor mediana de vistas (≥ ${c.minWorks} obras) es ${ch.label} (${fmt(ch.medianViews)} en ${ch.count} obras).`);
+  return out;
 }

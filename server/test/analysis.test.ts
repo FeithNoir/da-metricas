@@ -99,3 +99,69 @@ describe('análisis por artista', () => {
     expect(e.insights).toEqual([]);
   });
 });
+
+describe('análisis por franquicia, personaje y SFW/NSFW', () => {
+  const now = new Date('2026-06-01T15:00:00Z');
+  const devs: DeviationWithMetrics[] = [
+    ...[100, 200, 300, 400, 500, 600].map((v, i) =>
+      dev({ views: v, favourites: v / 10, franchises: ['Naruto'], characters: i < 3 ? ['Sakura Haruno'] : ['Tsunade'], ratingClass: i % 2 ? 'nsfw' : 'sfw', publishedAt: i < 3 ? '2025-03-01T15:00:00Z' : '2026-03-01T15:00:00Z' }),
+    ),
+    dev({ views: 5000, favourites: 100, franchises: ['Naruto', 'RWBY'], characters: ['Sakura Haruno', 'Weiss Schnee'], ratingClass: 'nsfw' }),
+    dev({ views: 50, favourites: 1, franchises: ['Original'], characters: [], ratingClass: 'sfw' }),
+    dev({ views: 70, favourites: 2, franchises: [], characters: [], ratingClass: 'desconocido' }),
+  ];
+  const c = analyzeArtist(devs, { now, characterFranchise: { 'Sakura Haruno': 'Naruto', Tsunade: 'Naruto', 'Weiss Schnee': 'RWBY' }, overrides: 2 }).classification;
+
+  it('cobertura y categorías especiales (Original, Sin clasificar)', () => {
+    expect(c.coverage).toMatchObject({ works: 9, withFranchise: 8, original: 1, unclassified: 1, fanart: 7, multiFranchise: 1, withCharacter: 7, overrides: 2 });
+    const keys = c.franchises.map((f) => f.key);
+    expect(keys[0]).toBe('Naruto');
+    expect(keys).toEqual(expect.arrayContaining(['RWBY', 'Original', 'Sin clasificar']));
+  });
+
+  it('estadística por categoría coherente con el resto (medianas, cuotas, muestra pequeña, top)', () => {
+    const n = c.franchises.find((f) => f.key === 'Naruto')!;
+    expect(n.count).toBe(7);
+    expect(n.medianViews).toBe(400);
+    expect(n.totalViews).toBe(7100);
+    expect(n.share).toBeCloseTo(7 / 9, 10);
+    expect(n.viewsShare).toBeCloseTo(7100 / 7220, 10);
+    expect(n.lowSample).toBe(false);
+    expect(n.top[0].views).toBe(5000);
+    expect(n.nsfwShare).toBeCloseTo(4 / 7, 10);
+    expect(c.franchises.find((f) => f.key === 'RWBY')!.lowSample).toBe(true);
+    const sakura = c.characters.find((x) => x.key === 'Sakura Haruno')!;
+    expect(sakura).toMatchObject({ count: 4, franchise: 'Naruto', medianViews: 250 });
+  });
+
+  it('SFW vs NSFW: conteos, medianas, prueba de Mann–Whitney y cruce por franquicia', () => {
+    expect(c.ratings.map((r) => [r.key, r.count])).toEqual([['sfw', 4], ['nsfw', 4], ['desconocido', 1]]);
+    expect(c.ratingTest?.views?.n1).toBe(4); // NSFW
+    expect(c.ratingTest?.views?.n2).toBe(4); // SFW
+    const fx = c.franchiseByRating.find((f) => f.key === 'Naruto')!;
+    expect(fx.sfw).toMatchObject({ count: 3, medianViews: 300, lowSample: true });
+    expect(fx.nsfw).toMatchObject({ count: 4, medianViews: 500 });
+    expect(fx.ratio).toBeNull(); // SFW tiene solo 3 obras: no se compara
+    const big = analyzeArtist(
+      [...[1, 2, 3, 4, 5].map((v) => dev({ views: v * 100, franchises: ['X'], ratingClass: 'sfw' })), ...[1, 2, 3, 4, 5].map((v) => dev({ views: v * 300, franchises: ['X'], ratingClass: 'nsfw' }))],
+      { now },
+    ).classification.franchiseByRating[0];
+    expect(big.ratio).toBeCloseTo(3, 10);
+    expect(c.franchiseByRating.find((f) => f.key === 'RWBY')).toBeUndefined(); // < 5 obras
+  });
+
+  it('tendencia por año y ranking de personajes por mediana (primero los de muestra suficiente)', () => {
+    expect(c.franchiseByYear.years).toEqual(['2025', '2026']);
+    const nar = c.franchiseByYear.series.find((s) => s.key === 'Naruto')!;
+    expect(nar.counts).toEqual([3, 4]);
+    expect(nar.medianViews[0]).toBe(200);
+    expect(c.franchiseByYear.series.some((s) => s.key === 'Sin clasificar')).toBe(false);
+    expect(c.topCharactersByMedian.map((x) => x.key)).toEqual(['Tsunade', 'Sakura Haruno']);
+  });
+
+  it('frases del resumen', () => {
+    const a = analyzeArtist(devs, { now });
+    expect(a.insights.some((i) => /tiene franquicia identificada/.test(i))).toBe(true);
+    expect(a.insights.some((i) => /NSFW \(4\)/.test(i))).toBe(true);
+  });
+});

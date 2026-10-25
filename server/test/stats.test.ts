@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ageInDays, describe as desc, iqrFences, mean, median, pearson, percentileRank, quantile, ranks, rate, spearman, stdDev, zScore } from '../src/stats.js';
+import { ageInDays, describe as desc, mannWhitney, normalCdf, iqrFences, mean, median, pearson, percentileRank, quantile, ranks, rate, spearman, stdDev, zScore } from '../src/stats.js';
 
 describe('estadística descriptiva con valores conocidos', () => {
   const xs = [2, 4, 4, 4, 5, 5, 7, 9];
@@ -62,5 +62,31 @@ describe('atípicos, percentiles y tasas', () => {
     expect(ageInDays('2026-01-01T00:00:00Z', now)).toBe(10);
     expect(ageInDays('2026-01-10T23:00:00Z', now)).toBe(1);
     expect(ageInDays(null, now)).toBeNull();
+  });
+});
+
+describe('Mann–Whitney', () => {
+  it('normal estándar', () => {
+    expect(normalCdf(0)).toBeCloseTo(0.5, 6);
+    expect(normalCdf(1.96)).toBeCloseTo(0.975, 3);
+    expect(normalCdf(-1.96)).toBeCloseTo(0.025, 3);
+  });
+  it('U, z, p y tamaño del efecto con valores conocidos', () => {
+    // Grupos separados por completo: U = n1·n2 y P(superioridad) = 1
+    const r = mannWhitney([10, 11, 12, 13, 14, 15, 16, 17], [1, 2, 3, 4, 5, 6, 7, 8])!;
+    expect(r.u).toBe(64);
+    expect(r.probSuperiority).toBe(1);
+    expect(r.rankBiserial).toBe(1);
+    expect(r.p).toBeLessThan(0.001);
+    // Mismas distribuciones → sin diferencia
+    const same = mannWhitney([1, 2, 3, 4, 5], [1, 2, 3, 4, 5])!;
+    expect(same.u).toBe(12.5);
+    expect(same.p).toBe(1);
+    // Ejemplo con un empate (2 en ambos grupos): R1 = 12,5 → U = 2,5. Aproximación normal con corrección
+    // por empates y continuidad: z = (|2,5 − 10| − 0,5) / √(20/12 · (10 − 6/72)) ≈ 1,72 → p ≈ 0,086 (igual que SciPy, method='asymptotic').
+    const ref = mannWhitney([1, 4, 2, 3], [5, 6, 7, 8, 2])!;
+    expect(ref.u).toBe(2.5);
+    expect(ref.p).toBeCloseTo(0.086, 2);
+    expect(mannWhitney([1, 2], [3, 4, 5])).toBeNull();
   });
 });

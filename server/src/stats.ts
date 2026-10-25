@@ -162,3 +162,51 @@ export function ageInDays(publishedAt: string | null, now: Date): number | null 
   if (Number.isNaN(t)) return null;
   return Math.max(1, (now.getTime() - t) / 86_400_000);
 }
+
+/** Función de distribución normal estándar (aprox. de Abramowitz y Stegun 7.1.26, error < 1,5·10⁻⁷). */
+export function normalCdf(z: number): number {
+  const t = 1 / (1 + 0.3275911 * (Math.abs(z) / Math.SQRT2));
+  const erf = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-(z * z) / 2);
+  return z >= 0 ? 0.5 * (1 + erf) : 0.5 * (1 - erf);
+}
+
+export interface MannWhitney {
+  n1: number;
+  n2: number;
+  /** U del primer grupo. */
+  u: number;
+  z: number;
+  /** p bilateral (aproximación normal con corrección por empates y por continuidad). */
+  p: number;
+  /** Probabilidad de que una obra al azar del grupo 1 supere a una del grupo 2 (empates = ½). */
+  probSuperiority: number;
+  /** Correlación biserial de rangos: 2·P − 1, de −1 a 1. */
+  rankBiserial: number;
+}
+
+/**
+ * Prueba U de Mann–Whitney (Wilcoxon de suma de rangos) para dos muestras independientes.
+ * No asume normalidad: adecuada para vistas, que son muy asimétricas. null si algún grupo tiene < 3 valores.
+ */
+export function mannWhitney(a: readonly number[], b: readonly number[]): MannWhitney | null {
+  const x = finite(a);
+  const y = finite(b);
+  const n1 = x.length;
+  const n2 = y.length;
+  if (n1 < 3 || n2 < 3) return null;
+  const all = [...x, ...y];
+  const r = ranks(all);
+  const r1 = r.slice(0, n1).reduce((s, v) => s + v, 0);
+  const u = r1 - (n1 * (n1 + 1)) / 2;
+  const n = n1 + n2;
+  // Corrección por empates de la varianza
+  const counts = new Map<number, number>();
+  for (const v of all) counts.set(v, (counts.get(v) ?? 0) + 1);
+  const tieSum = [...counts.values()].reduce((s, t) => s + (t ** 3 - t), 0);
+  const variance = ((n1 * n2) / 12) * (n + 1 - tieSum / (n * (n - 1)));
+  const mu = (n1 * n2) / 2;
+  const z = variance > 0 ? Math.max(0, Math.abs(u - mu) - 0.5) / Math.sqrt(variance) : 0;
+  const p = z === 0 ? 1 : Math.min(1, 2 * (1 - normalCdf(z)));
+  const probSuperiority = u / (n1 * n2);
+  return { n1, n2, u, z: u >= mu ? z : -z, p, probSuperiority, rankBiserial: 2 * probSuperiority - 1 };
+}

@@ -18,6 +18,8 @@ export interface RssItem {
   rating: string | null;
   /** media:keywords del RSS (casi siempre vacío; las etiquetas reales vienen de oEmbed). */
   keywords: string[];
+  /** media:description del RSS (HTML del autor; se usa para clasificar franquicia/personajes). */
+  description?: string | null;
 }
 
 export interface RssPage {
@@ -52,7 +54,18 @@ export interface Deviation {
   statsSource: string | null;
 }
 
-export interface DeviationWithMetrics extends Deviation, Metrics {
+export type RatingClass = 'sfw' | 'nsfw' | 'desconocido';
+
+/** Clasificación efectiva de una obra (manual si existe; si no, automática). */
+export interface WorkClassification {
+  franchises: string[];
+  characters: string[];
+  ratingClass: RatingClass;
+  /** true si alguna parte viene de una corrección manual. */
+  classificationOverridden: boolean;
+}
+
+export interface DeviationWithMetrics extends Deviation, Metrics, Partial<WorkClassification> {
   /** Fecha del último snapshot (null si nunca se obtuvieron métricas). */
   metricsAt: string | null;
 }

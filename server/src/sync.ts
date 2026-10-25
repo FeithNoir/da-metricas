@@ -8,6 +8,8 @@ export interface SyncOptions {
   /** Concurrencia para pedir detalles (respeta el límite global del cliente HTTP). */
   detailConcurrency?: number;
   log?: (msg: string) => void;
+  /** Se llama al terminar una sincronización con obras (p. ej. para reclasificar). */
+  onFinished?: (username: string) => void;
 }
 
 /**
@@ -93,6 +95,11 @@ export class SyncService {
       };
       await Promise.all(Array.from({ length: Math.min(2, Math.max(1, this.opts.detailConcurrency ?? config.concurrency)) }, worker));
       this.db.updateSync(syncId, { processed, failed });
+      try {
+        this.opts.onFinished?.(username);
+      } catch (e) {
+        log(`[sync ${username}] no se pudo reclasificar: ${(e as Error).message}`);
+      }
       if (failed === items.length) return finish('error', `No se pudieron leer las métricas: ${firstError}`);
       return finish(failed ? 'partial' : 'ok', failed ? `${failed} obra(s) sin métricas en esta pasada (${firstError}).` : null);
     } catch (e) {

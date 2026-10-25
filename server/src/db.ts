@@ -1,7 +1,9 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { Artist, DeviationDetail, DeviationWithMetrics, RssItem, Snapshot, SyncRecord, SyncStatus } from './types.js';
+import { ratingClassOf } from './classifier/classify.js';
+import type { Evidence } from './classifier/classify.js';
+import type { Artist, DeviationDetail, DeviationWithMetrics, RatingClass, RssItem, Snapshot, SyncRecord, SyncStatus } from './types.js';
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -58,6 +60,37 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS http_cache (url TEXT PRIMARY KEY, body TEXT NOT NULL, fetched_at INTEGER NOT NULL);
 `;
 
+/**
+ * Migraciones incrementales (PRAGMA user_version). Nunca borran datos: solo añaden columnas y tablas.
+ * v1: descripción de la obra + clasificación automática (franquicia, personajes, evidencia) + correcciones manuales.
+ */
+export const MIGRATIONS: { version: number; up: (sql: DatabaseSync) => void }[] = [
+  {
+    version: 1,
+    up: (sql) => {
+      const cols = (sql.prepare('PRAGMA table_info(deviations)').all() as Row[]).map((r) => String(r['name']));
+      if (!cols.includes('description')) sql.exec('ALTER TABLE deviations ADD COLUMN description TEXT');
+      sql.exec(`
+        CREATE TABLE IF NOT EXISTS classifications (
+          deviation_id TEXT PRIMARY KEY REFERENCES deviations(id) ON DELETE CASCADE,
+          franchises TEXT NOT NULL DEFAULT '[]',
+          characters TEXT NOT NULL DEFAULT '[]',
+          evidence TEXT NOT NULL DEFAULT '[]',
+          dict_hash TEXT NOT NULL,
+          classified_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS classification_overrides (
+          deviation_id TEXT PRIMARY KEY REFERENCES deviations(id) ON DELETE CASCADE,
+          franchises TEXT,
+          characters TEXT,
+          rating TEXT,
+          updated_at TEXT NOT NULL
+        );`);
+    },
+  },
+];
+export const SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
+
 type Row = Record<string, unknown>;
 const s = (v: unknown) => (v === null || v === undefined ? null : String(v));
 const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
@@ -97,6 +130,26 @@ export class Db {
     if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
     this.sql = new DatabaseSync(file);
     this.sql.exec(SCHEMA);
+    this.migrate();
+  }
+
+  get schemaVersion(): number {
+    return Number((this.sql.prepare('PRAGMA user_version').get() as Row)['user_version']);
+  }
+
+  private migrate() {
+    for (const m of MIGRATIONS) {
+      if (this.schemaVersion >= m.version) continue;
+      this.sql.exec('BEGIN');
+      try {
+        m.up(this.sql);
+        this.sql.exec(`PRAGMA user_version = ${m.version}`);
+        this.sql.exec('COMMIT');
+      } catch (e) {
+        this.sql.exec('ROLLBACK');
+        throw e;
+      }
+    }
   }
 
   close() {
@@ -179,14 +232,108 @@ export class Db {
   upsertFromRss(username: string, item: RssItem, seenAt: string) {
     this.sql
       .prepare(
-        `INSERT INTO deviations (id, username, url, title, thumbnail, published_at, rating, tags, first_seen_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO deviations (id, username, url, title, thumbnail, published_at, rating, tags, first_seen_at, last_seen_at, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET url = excluded.url, title = excluded.title,
            thumbnail = COALESCE(excluded.thumbnail, deviations.thumbnail),
            published_at = COALESCE(excluded.published_at, deviations.published_at),
-           rating = COALESCE(excluded.rating, deviations.rating), last_seen_at = excluded.last_seen_at`,
+           rating = COALESCE(excluded.rating, deviations.rating), last_seen_at = excluded.last_seen_at,
+           description = COALESCE(excluded.description, deviations.description)`,
       )
-      .run(item.id, username, item.url, item.title, item.thumbnail, item.publishedAt, item.rating, JSON.stringify(item.keywords), seenAt, seenAt);
+      .run(item.id, username, item.url, item.title, item.thumbnail, item.publishedAt, item.rating, JSON.stringify(item.keywords), seenAt, seenAt, item.description ?? null);
+  }
+  /** Rellena descripción y clasificación (si faltan) sin tocar el resto (p. ej. desde el RSS guardado en caché). */
+  fillFromRss(item: RssItem): boolean {
+    const r = this.sql
+      .prepare('UPDATE deviations SET description = COALESCE(description, ?), rating = COALESCE(rating, ?) WHERE id = ? AND (description IS NULL OR rating IS NULL)')
+      .run(item.description ?? '', item.rating, item.id); // '' = el RSS no trae descripción (no se vuelve a buscar)
+    return Number(r.changes) > 0;
+  }
+  cachedBodies(urlLike: string): { url: string; body: string }[] {
+    return (this.sql.prepare('SELECT url, body FROM http_cache WHERE url LIKE ?').all(urlLike) as Row[]).map((r) => ({ url: String(r['url']), body: String(r['body']) }));
+  }
+
+  // ---------- clasificación ----------
+  /** Datos mínimos para clasificar (sin métricas). */
+  worksToClassify(username: string): { id: string; title: string; tags: string[]; description: string | null }[] {
+    return (this.sql.prepare('SELECT id, title, tags, description FROM deviations WHERE username = ?').all(username) as Row[]).map((r) => ({
+      id: String(r['id']),
+      title: String(r['title']),
+      tags: parseList(r['tags']) ?? [],
+      description: s(r['description']),
+    }));
+  }
+  saveClassifications(items: { id: string; franchises: string[]; characters: string[]; evidence: Evidence[] }[], hash: string) {
+    const at = new Date().toISOString();
+    const st = this.sql.prepare(
+      `INSERT INTO classifications (deviation_id, franchises, characters, evidence, dict_hash, classified_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(deviation_id) DO UPDATE SET franchises = excluded.franchises, characters = excluded.characters, evidence = excluded.evidence,
+         dict_hash = excluded.dict_hash, classified_at = excluded.classified_at`,
+    );
+    this.sql.exec('BEGIN');
+    try {
+      for (const it of items) st.run(it.id, JSON.stringify(it.franchises), JSON.stringify(it.characters), JSON.stringify(it.evidence), hash, at);
+      this.sql.exec('COMMIT');
+    } catch (e) {
+      this.sql.exec('ROLLBACK');
+      throw e;
+    }
+  }
+  /** Obras del artista sin clasificar o clasificadas con otra versión del diccionario. */
+  staleClassifications(username: string, hash: string): number {
+    const r = this.sql
+      .prepare('SELECT COUNT(*) AS n FROM deviations d LEFT JOIN classifications c ON c.deviation_id = d.id WHERE d.username = ? AND (c.dict_hash IS NULL OR c.dict_hash <> ?)')
+      .get(username, hash) as Row;
+    return Number(r['n']);
+  }
+  getClassification(id: string): ClassificationRecord | null {
+    const r = this.sql
+      .prepare(
+        `SELECT d.rating AS raw_rating, c.franchises, c.characters, c.evidence, c.classified_at, c.dict_hash,
+                o.franchises AS o_franchises, o.characters AS o_characters, o.rating AS o_rating, o.updated_at AS o_updated_at
+         FROM deviations d LEFT JOIN classifications c ON c.deviation_id = d.id LEFT JOIN classification_overrides o ON o.deviation_id = d.id WHERE d.id = ?`,
+      )
+      .get(id) as Row | undefined;
+    if (!r) return null;
+    const auto = { franchises: parseList(r['franchises']) ?? [], characters: parseList(r['characters']) ?? [], ratingClass: ratingClassOf(s(r['raw_rating'])) };
+    const override = r['o_updated_at']
+      ? { franchises: parseList(r['o_franchises']), characters: parseList(r['o_characters']), rating: (s(r['o_rating']) as RatingClass | null) ?? null, updatedAt: String(r['o_updated_at']) }
+      : null;
+    let evidence: Evidence[] = [];
+    try {
+      evidence = JSON.parse(String(r['evidence'] ?? '[]')) as Evidence[];
+    } catch {
+      evidence = [];
+    }
+    return {
+      rawRating: s(r['raw_rating']),
+      auto,
+      evidence,
+      classifiedAt: s(r['classified_at']),
+      dictHash: s(r['dict_hash']),
+      override,
+      effective: {
+        franchises: override?.franchises ?? auto.franchises,
+        characters: override?.characters ?? auto.characters,
+        ratingClass: override?.rating ?? auto.ratingClass,
+      },
+    };
+  }
+  /** Guarda una corrección manual. Un campo null vuelve a la clasificación automática; si todos son null, se borra. */
+  setOverride(id: string, o: { franchises: string[] | null; characters: string[] | null; rating: RatingClass | null }) {
+    if (o.franchises === null && o.characters === null && o.rating === null) return this.clearOverride(id);
+    this.sql
+      .prepare(
+        `INSERT INTO classification_overrides (deviation_id, franchises, characters, rating, updated_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(deviation_id) DO UPDATE SET franchises = excluded.franchises, characters = excluded.characters, rating = excluded.rating, updated_at = excluded.updated_at`,
+      )
+      .run(id, o.franchises === null ? null : JSON.stringify(o.franchises), o.characters === null ? null : JSON.stringify(o.characters), o.rating, new Date().toISOString());
+  }
+  clearOverride(id: string) {
+    this.sql.prepare('DELETE FROM classification_overrides WHERE deviation_id = ?').run(id);
+  }
+  countOverrides(username: string): number {
+    return Number((this.sql.prepare('SELECT COUNT(*) AS n FROM classification_overrides o JOIN deviations d ON d.id = o.deviation_id WHERE d.username = ?').get(username) as Row)['n']);
   }
   applyDetail(id: string, d: DeviationDetail, syncId: number, takenAt: string) {
     this.sql
@@ -202,9 +349,11 @@ export class Db {
   listDeviations(username: string): DeviationWithMetrics[] {
     const rows = this.sql
       .prepare(
-        `SELECT d.*, s.views, s.favourites, s.comments, s.downloads, s.taken_at AS metrics_at
+        `SELECT ${DEV_COLUMNS}
          FROM deviations d
          LEFT JOIN snapshots s ON s.id = (SELECT id FROM snapshots WHERE deviation_id = d.id ORDER BY taken_at DESC, id DESC LIMIT 1)
+         LEFT JOIN classifications c ON c.deviation_id = d.id
+         LEFT JOIN classification_overrides o ON o.deviation_id = d.id
          WHERE d.username = ? ORDER BY d.published_at DESC`,
       )
       .all(username) as Row[];
@@ -213,9 +362,11 @@ export class Db {
   getDeviation(id: string): DeviationWithMetrics | null {
     const r = this.sql
       .prepare(
-        `SELECT d.*, s.views, s.favourites, s.comments, s.downloads, s.taken_at AS metrics_at
+        `SELECT ${DEV_COLUMNS}
          FROM deviations d
          LEFT JOIN snapshots s ON s.id = (SELECT id FROM snapshots WHERE deviation_id = d.id ORDER BY taken_at DESC, id DESC LIMIT 1)
+         LEFT JOIN classifications c ON c.deviation_id = d.id
+         LEFT JOIN classification_overrides o ON o.deviation_id = d.id
          WHERE d.id = ?`,
       )
       .get(id) as Row | undefined;
@@ -285,13 +436,37 @@ export class Db {
   }
 }
 
-function toDeviation(r: Row): DeviationWithMetrics {
-  let tags: string[] = [];
+export interface ClassificationRecord {
+  rawRating: string | null;
+  auto: { franchises: string[]; characters: string[]; ratingClass: RatingClass };
+  evidence: Evidence[];
+  classifiedAt: string | null;
+  dictHash: string | null;
+  override: null | { franchises: string[] | null; characters: string[] | null; rating: RatingClass | null; updatedAt: string };
+  effective: { franchises: string[]; characters: string[]; ratingClass: RatingClass };
+}
+
+const DEV_COLUMNS = `d.id, d.username, d.url, d.title, d.thumbnail, d.published_at, d.rating, d.tags, d.first_seen_at, d.last_seen_at, d.stats_source,
+  s.views, s.favourites, s.comments, s.downloads, s.taken_at AS metrics_at,
+  c.franchises AS c_franchises, c.characters AS c_characters,
+  o.franchises AS o_franchises, o.characters AS o_characters, o.rating AS o_rating, o.updated_at AS o_updated_at`;
+
+/** Lista JSON guardada en texto; null si el valor es NULL (o inválido). */
+function parseList(v: unknown): string[] | null {
+  if (v === null || v === undefined) return null;
   try {
-    tags = JSON.parse(String(r['tags'] ?? '[]')) as string[];
+    const x = JSON.parse(String(v)) as unknown;
+    return Array.isArray(x) ? x.map(String) : null;
   } catch {
-    tags = [];
+    return null;
   }
+}
+
+function toDeviation(r: Row): DeviationWithMetrics {
+  const tags = parseList(r['tags']) ?? [];
+  const oFr = parseList(r['o_franchises']);
+  const oCh = parseList(r['o_characters']);
+  const oRating = s(r['o_rating']) as RatingClass | null;
   return {
     id: String(r['id']),
     username: String(r['username']),
@@ -309,5 +484,9 @@ function toDeviation(r: Row): DeviationWithMetrics {
     comments: Number(r['comments'] ?? 0),
     downloads: n(r['downloads']),
     metricsAt: s(r['metrics_at']),
+    franchises: oFr ?? parseList(r['c_franchises']) ?? [],
+    characters: oCh ?? parseList(r['c_characters']) ?? [],
+    ratingClass: oRating ?? ratingClassOf(s(r['rating'])),
+    classificationOverridden: !!r['o_updated_at'],
   };
 }

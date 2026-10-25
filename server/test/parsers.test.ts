@@ -19,6 +19,9 @@ describe('RSS de la galería (respuesta real recortada)', () => {
     expect(first.rating).toBe('adult');
     expect(first.thumbnail).toMatch(/w_300,h_900/);
     expect(first.keywords).toEqual([]);
+    // media:description (HTML del autor) se guarda para clasificar franquicia y personajes
+    expect(first.description).toMatch(/Lillith/);
+    expect(first.description).not.toMatch(/&lt;/);
     expect(page.nextUrl).toBe('https://backend.deviantart.com/rss.xml?type=deviation&q=gallery%3Afeithnoir&offset=60');
   });
 
@@ -26,6 +29,8 @@ describe('RSS de la galería (respuesta real recortada)', () => {
     const page = parseRssPage(fixture('rss-feithnoir-last.xml'));
     expect(page.items).toHaveLength(2);
     expect(page.nextUrl).toBeNull();
+    // SFW/NSFW: DeviantArt marca cada obra con media:rating (adult / nonadult)
+    expect(page.items.map((i) => i.rating)).toEqual(['nonadult', 'nonadult']);
   });
 
   it('un usuario inexistente devuelve un feed vacío', () => {

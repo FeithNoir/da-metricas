@@ -87,12 +87,79 @@ describe('API REST', () => {
     expect(csv.headers['content-type']).toMatch(/text\/csv/);
     const lines = csv.body.trim().split('\r\n');
     expect([...csv.rawPayload.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // BOM UTF-8 para Excel
-    expect(lines[0].replace('\uFEFF', '')).toBe('id,titulo,url,publicada,vistas,favoritos,comentarios,descargas,tasa_favoritos,tasa_comentarios,vistas_por_dia,etiquetas,clasificacion,metricas_al');
+    expect(lines[0].replace('\uFEFF', '')).toBe('id,titulo,url,publicada,vistas,favoritos,comentarios,descargas,tasa_favoritos,tasa_comentarios,vistas_por_dia,etiquetas,clasificacion_deviantart,sfw_nsfw,franquicias,personajes,metricas_al');
     expect(lines).toHaveLength(6);
+
+    // Clasificación automática tras sincronizar: SFW/NSFW desde media:rating y Original desde la etiqueta originalcharacter
+    expect(byPage).toMatchObject({ ratingClass: 'nsfw', franchises: ['Original'], classificationOverridden: false });
+    expect(lines[1]).toContain('nsfw');
+    expect(analysis.classification.coverage.works).toBe(5);
+    expect(analysis.classification.ratings.find((r: { key: string }) => r.key === 'nsfw').count).toBeGreaterThan(0);
+    expect(detail.classification.rawRating).toBe('adult');
+    expect(detail.classification.evidence.some((e: { kind: string; match: string }) => e.kind === 'original' && e.match === 'originalcharacter')).toBe(true);
 
     // segunda sincronización → segundo snapshot e historial
     await app.syncService.start('feithnoir').done;
     expect((await app.inject('/api/deviations/1401415400')).json().history).toHaveLength(2);
+  });
+
+  it('correcciones manuales, filtros, diccionario personalizado y reclasificación', async () => {
+    await setup();
+    await app.syncService.start('feithnoir').done;
+    const id = '1401415400';
+    const put = (payload: unknown) => app.inject({ method: 'PUT', url: `/api/deviations/${id}/classification`, payload: payload as object });
+
+    // Validación en español
+    expect((await put({ rating: 'rojo' })).statusCode).toBe(400);
+    expect((await put({ franchises: 'Naruto' })).json().error).toMatch(/lista de textos/);
+    expect((await app.inject({ method: 'PUT', url: '/api/deviations/abc/classification', payload: {} })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'PUT', url: '/api/deviations/123/classification', payload: {} })).statusCode).toBe(404);
+
+    // La corrección manual manda sobre la automática
+    const ok = await put({ franchises: ['Naruto', ' Naruto '], characters: ['Sakura Haruno'], rating: 'sfw' });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().classification.effective).toEqual({ franchises: ['Naruto'], characters: ['Sakura Haruno'], ratingClass: 'sfw' });
+    expect(ok.json().classification.auto.franchises).toEqual(['Original']);
+    const w = (await app.inject(`/api/artists/feithnoir/deviations?franchise=naruto`)).json();
+    expect(w.items.map((x: { id: string }) => x.id)).toEqual([id]);
+    expect(w.items[0]).toMatchObject({ ratingClass: 'sfw', classificationOverridden: true });
+    expect((await app.inject('/api/artists/feithnoir/deviations?character=sakura%20haruno')).json().total).toBe(1);
+    expect((await app.inject('/api/artists/feithnoir/deviations?rating=sfw')).json().total).toBe(3); // 2 SFW de origen + la corregida
+    expect((await app.inject('/api/artists/feithnoir/deviations?rating=nsfw')).json().total).toBe(2);
+
+    // Campos omitidos se conservan; null vuelve a lo automático
+    expect((await put({ rating: null })).json().classification.effective).toMatchObject({ franchises: ['Naruto'], ratingClass: 'nsfw' });
+    // La reclasificación no pisa las correcciones
+    const re = (await app.inject({ method: 'POST', url: '/api/artists/feithnoir/reclassify' })).json();
+    expect(re).toMatchObject({ works: 5, overrides: 1 });
+    expect((await app.inject(`/api/deviations/${id}`)).json().classification.effective.franchises).toEqual(['Naruto']);
+    const an = (await app.inject('/api/artists/feithnoir/analysis')).json();
+    expect(an.classification.coverage.overrides).toBe(1);
+    expect(an.classification.franchises.find((f: { key: string }) => f.key === 'Naruto').count).toBe(1);
+    // Borrar la corrección
+    const del = (await app.inject({ method: 'DELETE', url: `/api/deviations/${id}/classification` })).json();
+    expect(del.classification.override).toBeNull();
+    expect(del.classification.effective.franchises).toEqual(['Original']);
+    // Una corrección que deja todo en null equivale a borrarla (no queda marcada como manual)
+    await put({ rating: 'nsfw' });
+    const allNull = (await put({ rating: null })).json().classification;
+    expect(allNull.override).toBeNull();
+    expect((await app.inject(`/api/deviations/${id}`)).json().deviation.classificationOverridden).toBe(false);
+
+    // Diccionario personalizado: valida, guarda y reclasifica todo
+    const bad = await app.inject({ method: 'PUT', url: '/api/dictionary/custom', payload: { franchises: [{ aliases: ['x'] }] } });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toMatch(/necesita “name”/);
+    const before = (await app.inject('/api/dictionary')).json();
+    expect(before.franchises.length).toBeGreaterThan(50);
+    const saved = await app.inject({ method: 'PUT', url: '/api/dictionary/custom', payload: { franchises: [{ name: 'Brujería Gótica', aliases: ['ecchitober'] }] } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().hash).not.toBe(before.hash);
+    expect(saved.json().reclassified).toBe(5);
+    expect((await app.inject('/api/artists/feithnoir/deviations?franchise=brujeria%20gotica')).json().total).toBe(5);
+    await app.inject({ method: 'DELETE', url: '/api/dictionary/custom' });
+    expect((await app.inject('/api/artists/feithnoir/deviations?franchise=brujeria%20gotica')).json().total).toBe(0);
+    expect((await app.inject('/api/artists/feithnoir/deviations?franchise=sin%20clasificar')).json().total).toBeGreaterThanOrEqual(0);
   });
 
   it('informa si el usuario no existe', async () => {
