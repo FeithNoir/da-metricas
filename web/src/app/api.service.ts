@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import type { Analysis, Artist, ArtistResponse, Settings, SyncRecord, Work, WorkDetailResponse } from './models';
+import type { Analysis, Artist, ArtistResponse, ClassificationOverride, ClassificationRecord, DictionaryInfo, ReclassifyResult, Settings, SyncRecord, Work, WorkDetailResponse } from './models';
 
 /** Mensaje en español a partir de un error HTTP. */
 export function errorMessage(e: unknown): string {
@@ -21,6 +21,9 @@ export interface WorksFilter {
   tag?: string;
   from?: string;
   to?: string;
+  franchise?: string;
+  character?: string;
+  rating?: string;
   sort?: string;
   order?: 'asc' | 'desc';
 }
@@ -53,6 +56,24 @@ export class ApiService {
   }
   work(id: string) {
     return firstValueFrom(this.http.get<WorkDetailResponse>(`/api/deviations/${encodeURIComponent(id)}`));
+  }
+  saveClassification(id: string, body: ClassificationOverride) {
+    return firstValueFrom(this.http.put<{ classification: ClassificationRecord }>(`/api/deviations/${encodeURIComponent(id)}/classification`, body));
+  }
+  clearClassification(id: string) {
+    return firstValueFrom(this.http.delete<{ classification: ClassificationRecord }>(`/api/deviations/${encodeURIComponent(id)}/classification`));
+  }
+  reclassify(username: string) {
+    return firstValueFrom(this.http.post<ReclassifyResult>(`/api/artists/${this.u(username)}/reclassify`, {}));
+  }
+  dictionary() {
+    return firstValueFrom(this.http.get<DictionaryInfo>('/api/dictionary'));
+  }
+  saveDictionary(custom: unknown) {
+    return firstValueFrom(this.http.put<DictionaryInfo>('/api/dictionary/custom', custom));
+  }
+  clearDictionary() {
+    return firstValueFrom(this.http.delete<DictionaryInfo>('/api/dictionary/custom'));
   }
   settings() {
     return firstValueFrom(this.http.get<Settings>('/api/settings'));

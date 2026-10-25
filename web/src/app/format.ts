@@ -74,3 +74,36 @@ export const METRIC_LABEL: Record<string, string> = {
 
 export const isRate = (k: string) => k === 'favRate' || k === 'commentRate';
 export const metricValue = (k: string, v: number | null | undefined) => (isRate(k) ? pct(v, 2) : num(v, k.endsWith('PerDay') ? 1 : 0));
+
+export const ORIGINAL = 'Original';
+export const UNCLASSIFIED = 'Sin clasificar';
+export const RATING_LABEL: Record<string, string> = { sfw: 'SFW', nsfw: 'NSFW', desconocido: 'Desconocido' };
+
+/** Igual que en el servidor: minúsculas, sin tildes ni signos (“Sakura Haruno” → “sakuraharuno”). */
+export function compactKey(s: string): string {
+  return s
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+/** p-valor legible (“< 0,001”). */
+export function pValue(p: number | null | undefined): string {
+  if (p === null || p === undefined || !Number.isFinite(p)) return '—';
+  return p < 0.001 ? '< 0,001' : num(p, 3);
+}
+
+/** “Sakura Haruno, Sarada Uchiha” → lista limpia, sin duplicados (sin distinguir mayúsculas/tildes). */
+export function splitList(s: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of s.split(/[,;\n]/)) {
+    const v = raw.trim().replace(/\s+/g, ' ');
+    const k = compactKey(v);
+    if (!v || !k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(v);
+  }
+  return out;
+}

@@ -3,12 +3,13 @@ import { RouterLink } from '@angular/router';
 import { ApiService, errorMessage, isNotFound } from '../api.service';
 import { LineChart, type LineSeries } from '../charts/line-chart';
 import { date, dateTime, METRIC_LABEL, metricValue, num } from '../format';
-import type { MetricKey, WorkDetailResponse } from '../models';
+import type { ClassificationRecord, MetricKey, WorkDetailResponse } from '../models';
+import { ClassificationCard } from './classification-card';
 
 @Component({
   selector: 'app-work-detail-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, LineChart],
+  imports: [RouterLink, LineChart, ClassificationCard],
   template: `
     @if (state() === 'loading') {
       <p class="loading" aria-live="polite"><span class="spinner" aria-hidden="true"></span> Cargando obra…</p>
@@ -49,6 +50,10 @@ import type { MetricKey, WorkDetailResponse } from '../models';
           <p class="muted small">Métricas al {{ dt(w.metricsAt) }} · fuente: {{ w.statsSource === 'page' ? 'página pública' : 'oEmbed' }}</p>
         </div>
       </article>
+
+      @if (r.classification; as cl) {
+        <app-classification-card [record]="cl" [workId]="w.id" [username]="w.username" (saved)="onSaved($event)" />
+      }
 
       @if (r.detail; as det) {
         <section class="card">
@@ -122,6 +127,18 @@ export class WorkDetailPage {
       const id = this.id();
       untracked(() => void this.load(id));
     });
+  }
+
+  protected onSaved(c: ClassificationRecord) {
+    this.data.update((d) =>
+      d
+        ? {
+            ...d,
+            classification: c,
+            deviation: { ...d.deviation, franchises: c.effective.franchises, characters: c.effective.characters, ratingClass: c.effective.ratingClass, classificationOverridden: !!c.override },
+          }
+        : d,
+    );
   }
 
   private async load(id: string) {

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { BarChart, type Bar } from '../charts/bar-chart';
 import { ColumnChart, type Column } from '../charts/column-chart';
@@ -6,6 +6,7 @@ import { LineChart, type LineSeries } from '../charts/line-chart';
 import { ScatterChart, type ScatterPoint } from '../charts/scatter-chart';
 import { compact, corr, corrLabel, date, dateTime, METRIC_LABEL, metricValue, num, pct } from '../format';
 import type { Analysis, Descriptive, GroupStat, Work, WorkRow } from '../models';
+import { ClassificationView } from './classification-view';
 
 type DateGroup = 'byMonth' | 'byYear' | 'byWeekday' | 'byHour';
 type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
@@ -13,7 +14,7 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
 @Component({
   selector: 'app-analysis-view',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, BarChart, ColumnChart, LineChart, ScatterChart],
+  imports: [RouterLink, BarChart, ColumnChart, LineChart, ScatterChart, ClassificationView],
   template: `
     @let a = analysis();
     <section class="card">
@@ -37,6 +38,10 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
         <p class="muted small">{{ a.worksWithoutMetrics }} obra(s) no tienen métricas todavía y no entran en el análisis.</p>
       }
     </section>
+
+    @if (a.classification; as cl) {
+      <app-classification-view [data]="cl" [username]="username()" (changed)="changed.emit()" />
+    }
 
     <section class="card">
       <h2>Estadística descriptiva</h2>
@@ -269,6 +274,9 @@ type GroupMetric = 'medianViews' | 'meanViews' | 'meanFavourites' | 'count';
 export class AnalysisView {
   readonly analysis = input.required<Analysis>();
   readonly works = input<Work[]>([]);
+  readonly username = input('');
+  /** Reclasificación hecha desde la sección de franquicias: hay que recargar. */
+  readonly changed = output<void>();
 
   protected readonly n = num;
   protected readonly c = compact;

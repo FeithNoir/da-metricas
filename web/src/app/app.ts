@@ -17,7 +17,8 @@ import { UserSearch } from './pages/user-search';
       <router-outlet />
     </main>
     <footer class="footer">
-      Datos públicos de DeviantArt (RSS, oEmbed y páginas públicas), sin la API oficial. Proyecto no afiliado a DeviantArt.
+      Datos públicos de DeviantArt (RSS, oEmbed y páginas públicas), sin la API oficial. Proyecto no afiliado a DeviantArt. ·
+      <a routerLink="/diccionario">Diccionario de franquicias y personajes</a>
     </footer>
   `,
 })

@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { RouterLink } from '@angular/router';
 
 export interface Bar {
   label: string;
@@ -7,19 +8,26 @@ export interface Bar {
   hint?: string;
   /** Barra atenuada (p. ej. muestra pequeña). */
   muted?: boolean;
+  /** Enlace interno de la etiqueta ([] = misma página, útil con `query`). */
   link?: string[];
+  query?: Record<string, string | null>;
 }
 
 /** Barras horizontales accesibles (HTML + CSS, sin librerías). */
 @Component({
   selector: 'app-bar-chart',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [RouterLink],
   template: `
     @if (rows().length) {
       <ul class="bars" [attr.aria-label]="label()">
         @for (b of rows(); track b.label + $index) {
           <li class="bars__row" [class.bars__row--muted]="b.muted">
-            <span class="bars__label" [title]="b.label">{{ b.label }}</span>
+            @if (b.link) {
+              <a class="bars__label" [title]="b.label" [routerLink]="b.link" [queryParams]="b.query ?? null">{{ b.label }}</a>
+            } @else {
+              <span class="bars__label" [title]="b.label">{{ b.label }}</span>
+            }
             <span class="bars__track" aria-hidden="true"><span class="bars__fill" [style.width.%]="b.width"></span></span>
             <span class="bars__value">{{ b.text }}@if (b.hint) {<small> · {{ b.hint }}</small>}</span>
           </li>

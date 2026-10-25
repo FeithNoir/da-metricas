@@ -4,7 +4,7 @@ import { ApiService, errorMessage, isNotFound } from '../api.service';
 import { ago, dateTime, num, SYNC_STATUS } from '../format';
 import type { Analysis, ArtistResponse, SyncRecord, Work } from '../models';
 import { AnalysisView } from './analysis-view';
-import { WorksTable } from './works-table';
+import { type Filters, WorksTable } from './works-table';
 
 type Tab = 'obras' | 'analisis';
 
@@ -90,9 +90,9 @@ type Tab = 'obras' | 'analisis';
             </button>
           </nav>
           @if (activeTab() === 'obras') {
-            <app-works-table [works]="works()" [username]="username()" />
+            <app-works-table [works]="works()" [username]="username()" [preset]="preset()" />
           } @else if (analysis(); as a) {
-            <app-analysis-view [analysis]="a" [works]="works()" />
+            <app-analysis-view [analysis]="a" [works]="works()" [username]="username()" (changed)="reload()" />
           } @else {
             <p class="loading" aria-live="polite"><span class="spinner" aria-hidden="true"></span> Calculando estadísticas…</p>
           }
@@ -126,6 +126,17 @@ export class ArtistPage {
   readonly username = input.required<string>();
   /** Pestaña desde ?tab=analisis */
   readonly tab = input<string | undefined>(undefined);
+  /** Filtros desde el análisis: ?franquicia=Naruto, ?personaje=Sakura Haruno, ?clasif=nsfw */
+  readonly franquicia = input<string | undefined>(undefined);
+  readonly personaje = input<string | undefined>(undefined);
+  readonly clasif = input<string | undefined>(undefined);
+  protected readonly preset = computed<Partial<Filters> | null>(() => {
+    const f = this.franquicia();
+    const c = this.personaje();
+    const r = this.clasif();
+    if (!f && !c && !r) return null;
+    return { franchise: f ?? '', character: c ?? '', rating: r && ['sfw', 'nsfw', 'desconocido'].includes(r) ? r : '' };
+  });
 
   protected readonly state = signal<'loading' | 'ready' | 'missing' | 'error'>('loading');
   protected readonly data = signal<ArtistResponse | null>(null);
@@ -155,7 +166,25 @@ export class ArtistPage {
   }
 
   protected setTab(t: Tab) {
-    void this.router.navigate([], { relativeTo: this.route, queryParams: { tab: t === 'obras' ? null : t }, queryParamsHandling: 'merge', replaceUrl: true });
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { tab: t === 'obras' ? null : t, franquicia: null, personaje: null, clasif: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
+  /** Tras reclasificar: obras y análisis nuevos, sin parpadeo de carga. */
+  protected async reload() {
+    try {
+      const u = this.username();
+      const [w, a] = await Promise.all([this.api.works(u), this.api.analysis(u)]);
+      this.works.set(w.items);
+      this.analysis.set(a);
+    } catch (e) {
+      this.noticeKind.set('error');
+      this.notice.set(errorMessage(e));
+    }
   }
 
   private async load(u: string) {

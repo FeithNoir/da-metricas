@@ -52,7 +52,16 @@ export interface Work {
   viewsPerDay: number | null;
   firstSeenAt: string;
   lastSeenAt: string;
+  /** Franquicias o fuentes (multi-etiqueta). Vacío = sin clasificar. “Original” = creación propia. */
+  franchises?: string[];
+  characters?: string[];
+  /** SFW/NSFW según la marca de DeviantArt (media:rating / safety). */
+  ratingClass?: RatingClass;
+  /** true si hay una corrección manual. */
+  classificationOverridden?: boolean;
 }
+
+export type RatingClass = 'sfw' | 'nsfw' | 'desconocido';
 
 export interface WorkRow {
   id: string;
@@ -147,6 +156,123 @@ export interface Analysis {
   growth: null | { from: string; to: string; works: number; views: number; favourites: number; comments: number; top: GrowthEntry[] };
   timeline: { takenAt: string; views: number; favourites: number; comments: number; works: number }[];
   insights: string[];
+  classification?: ClassificationAnalysis;
+}
+
+export interface TopWork {
+  id: string;
+  title: string;
+  url: string;
+  views: number;
+  favourites: number;
+}
+
+export interface CategoryStat {
+  key: string;
+  label: string;
+  count: number;
+  share: number;
+  totalViews: number;
+  viewsShare: number;
+  medianViews: number | null;
+  meanViews: number | null;
+  totalFavourites: number;
+  medianFavourites: number | null;
+  meanFavourites: number | null;
+  totalComments: number;
+  medianComments: number | null;
+  meanComments: number | null;
+  medianFavRate: number | null;
+  meanFavRate: number | null;
+  medianViewsPerDay: number | null;
+  nsfwShare: number | null;
+  lowSample: boolean;
+  franchise?: string | null;
+  top: TopWork[];
+}
+
+export interface MannWhitney {
+  n1: number;
+  n2: number;
+  u: number;
+  z: number;
+  p: number;
+  probSuperiority: number;
+  rankBiserial: number;
+}
+
+export interface RatingCell {
+  count: number;
+  medianViews: number | null;
+  medianFavRate: number | null;
+  medianViewsPerDay: number | null;
+  lowSample: boolean;
+}
+
+export interface ClassificationAnalysis {
+  minWorks: number;
+  dictionaryHash: string | null;
+  coverage: {
+    works: number;
+    withFranchise: number;
+    fanart: number;
+    original: number;
+    unclassified: number;
+    withCharacter: number;
+    multiFranchise: number;
+    overrides: number;
+    franchisesDistinct: number;
+    charactersDistinct: number;
+  };
+  franchises: CategoryStat[];
+  characters: CategoryStat[];
+  ratings: CategoryStat[];
+  ratingTest: null | { views: MannWhitney | null; favRate: MannWhitney | null; viewsPerDay: MannWhitney | null };
+  franchiseByRating: { key: string; label: string; count: number; sfw: RatingCell; nsfw: RatingCell; ratio: number | null }[];
+  franchiseByYear: { years: string[]; series: { key: string; label: string; counts: number[]; medianViews: (number | null)[]; total: number }[] };
+  topCharactersByMedian: CategoryStat[];
+}
+
+export interface Evidence {
+  kind: 'franchise' | 'character' | 'original';
+  value: string;
+  source: 'tag' | 'title' | 'description' | 'inferred';
+  match: string;
+}
+
+export interface ClassificationRecord {
+  rawRating: string | null;
+  auto: { franchises: string[]; characters: string[]; ratingClass: RatingClass };
+  evidence: Evidence[];
+  classifiedAt: string | null;
+  dictHash: string | null;
+  override: null | { franchises: string[] | null; characters: string[] | null; rating: RatingClass | null; updatedAt: string };
+  effective: { franchises: string[]; characters: string[]; ratingClass: RatingClass };
+}
+
+/** Cuerpo de PUT /api/deviations/:id/classification: campo omitido = se mantiene, null = vuelve a lo automático. */
+export interface ClassificationOverride {
+  franchises?: string[] | null;
+  characters?: string[] | null;
+  rating?: RatingClass | null;
+}
+
+export interface DictionaryInfo {
+  version: number | string | null;
+  hash: string;
+  franchises: { name: string; aliases: string[]; characters: string[] }[];
+  artists: string[];
+  custom: unknown;
+  reclassified?: number;
+}
+
+export interface ReclassifyResult {
+  works: number;
+  hash: string;
+  withFranchise: number;
+  unclassified: number;
+  original: number;
+  overrides: number;
 }
 
 export interface Snapshot {
@@ -169,6 +295,7 @@ export interface WorkDetailResponse {
     artistMedians: Partial<Record<MetricKey, number | null>>;
     peers: number;
   };
+  classification?: ClassificationRecord | null;
 }
 
 export interface Settings {
