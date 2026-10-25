@@ -1,6 +1,6 @@
 # DA Métricas
 
-Aplicación full-stack para **medir el rendimiento público de las obras de un artista de DeviantArt**: sincroniza su galería, guarda un historial de métricas en SQLite y presenta un **análisis estadístico explicado en español sencillo** (descriptivos, interacción, atípicos, correlaciones, etiquetas, fechas, antigüedad y crecimiento), ahora también **por franquicia o fuente** (Naruto, Bleach, One Piece, Warframe… u *Original*), **por personaje** (Sakura Haruno, Sarada Uchiha…) y **SFW vs. NSFW**.
+Aplicación full-stack para **medir el rendimiento público de las obras de un artista de DeviantArt**: sincroniza su galería, guarda un historial de métricas en SQLite y presenta un **análisis estadístico explicado en español sencillo** (descriptivos, interacción, atípicos, correlaciones, etiquetas, fechas, antigüedad y crecimiento), ahora también **por franquicia o fuente** (Naruto, Bleach, One Piece, Warframe… u *Original*), **por personaje** (Sakura Haruno, Sarada Uchiha…) y **SFW vs. NSFW**. La sección **Tendencias** mide además las **X obras más recientes** y las **X más populares** de la plataforma, las analiza igual que a un artista y las **contrasta** con la galería, con **consejos basados en reglas** (cada uno con sus cifras y su confianza).
 
 Pensada para seguir la cuenta [feithnoir](https://www.deviantart.com/feithnoir), pero funciona con **cualquier usuario público**.
 **No usa la API oficial de DeviantArt** (ni OAuth ni `api/v1/oauth2`): solo fuentes públicas, gratuitas y sin claves.
@@ -18,6 +18,11 @@ Pensada para seguir la cuenta [feithnoir](https://www.deviantart.com/feithnoir),
 | ![Obras filtradas por franquicia y NSFW](docs/screenshots/obras-filtros-escritorio.png) | ![Filtros en móvil](docs/screenshots/obras-filtros-movil.png) |
 | ![Clasificación de una obra y corrección manual](docs/screenshots/clasificacion-obra-escritorio.png) | ![Corrección manual en móvil](docs/screenshots/clasificacion-obra-movil.png) |
 | ![Por personaje](docs/screenshots/personajes-escritorio.png) | ![Franquicias por año](docs/screenshots/tendencia-escritorio.png) |
+| ![Tendencias: consejos para el artista](docs/screenshots/tendencias-consejos-escritorio.png) | ![Tendencias en móvil](docs/screenshots/tendencias-movil.png) |
+| ![Tendencias: cara a cara](docs/screenshots/tendencias-cara-a-cara-escritorio.png) | ![Consejos en móvil](docs/screenshots/tendencias-consejos-movil.png) |
+| ![Tendencias: etiquetas, franquicias y personajes](docs/screenshots/tendencias-etiquetas-escritorio.png) | ![Contraste en móvil](docs/screenshots/tendencias-contraste-movil.png) |
+| ![Tendencias: a igual edad](docs/screenshots/tendencias-edad-escritorio.png) | |
+| ![Muestra de recientes](docs/screenshots/tendencias-recientes-escritorio.png) | ![Muestra de populares](docs/screenshots/tendencias-populares-escritorio.png) |
 
 ## Qué hace
 
@@ -27,6 +32,7 @@ Pensada para seguir la cuenta [feithnoir](https://www.deviantart.com/feithnoir),
 - **Tabla de obras** ordenable y filtrable (título, etiqueta, **franquicia, personaje, SFW/NSFW**, rango de fechas) con enlaces al original y **exportación a CSV** (respeta los filtros e incluye franquicias, personajes y SFW/NSFW).
 - **Clasificación por franquicia o fuente, personaje y SFW/NSFW** con reglas y un diccionario ampliable (sin IA ni servicios externos), **corrección manual por obra** y botón **Reclasificar todo** (no vuelve a descargar nada). Ver [Franquicias, personajes y SFW/NSFW](#franquicias-personajes-y-sfwnsfw).
 - **Análisis estadístico** por artista y **detalle por obra** (percentiles frente a las demás obras, puesto, historial con gráfico).
+- **Tendencias** (`/tendencias`): muestras de las **X obras más recientes** y las **X más populares** (X configurable, 24–300; 100 por defecto), cada una con su propio análisis completo, más una pestaña de **contraste** con el artista y **consejos** para ganar rendimiento o alcance. Ver [Tendencias](#tendencias-recientes-populares-y-contraste).
 - Estados claros de **carga, vacío y error**: avisa si el usuario no existe o no tiene obras públicas.
 
 ## Fuentes de datos (verificadas en vivo el 24 de octubre de 2026)
@@ -112,6 +118,51 @@ Por franquicia, por personaje y por SFW/NSFW: n.º de obras y cuota, vistas tota
 - Un OC de otro artista (*art trades*) cuenta como **Original**, no como franquicia.
 - El contenido premium que el RSS no lista no se clasifica (no se mide).
 
+## Tendencias: recientes, populares y contraste
+
+En **/tendencias** (o con el botón *Comparar con tendencias* de un artista) se miden dos muestras de la plataforma, **cada una por separado**, y se comparan con la galería:
+
+- **Recientes**: lo **último que se sube** (qué temas, etiquetas, SFW/NSFW y horarios usa la gente ahora mismo).
+- **Populares**: lo que DeviantArt **muestra como popular** (qué funciona y cuánto rinde).
+- **Contraste**: “cara a cara”, percentiles, comparación **a igual edad**, etiquetas/franquicias/personajes, horarios, SFW/NSFW, constancia y **consejos**.
+
+Cada muestra tiene su **propio análisis completo** (el mismo del artista: descriptivos, interacción, atípicos, correlaciones, etiquetas, fechas y franquicias/personajes/SFW-NSFW con el mismo clasificador), además de fuentes, autores distintos, edad al medir y miniaturas (las NSFW no se muestran). Las muestras se guardan en SQLite con su **fecha de medición**, así puedes medir varias veces y elegir cuál comparar. Se puede activar la **medición automática** (corre después de la sincronización automática).
+
+### Fuentes (verificadas en vivo el 24 de octubre de 2026)
+
+| Fuente | URL | Qué trae | Límites |
+| --- | --- | --- | --- |
+| **Página pública de una etiqueta** | `https://www.deviantart.com/tag/ETIQUETA?order=most-recent\|popular-all-time&page=N` | 24 obras por página en `window.__INITIAL_STATE__` (~1,3 MB), con vistas, favoritos, comentarios y clasificación | Sin sesión, “popular 24 h / semana / siempre” devuelven **la misma lista**, y lo **maduro se oculta** (0 % NSFW en Populares) |
+| **Portada** | `https://www.deviantart.com/` | 23 obras “hot now” en una sola página | Sin NSFW, una única página |
+| **oEmbed** (por obra) | `https://backend.deviantart.com/oembed?url=…` | Vistas, favoritos, comentarios, descargas y **etiquetas** frescas | Se pide siempre fresco y **no se guarda en caché** (son obras ajenas) |
+
+**No sirven** (probado): `rss.xml` con `sort:time` / `boost:popular` (ignora el orden), `/search?order=…`, `/popular` y `/popular/deviations` (404) y `/newest` (redirige). Como no existe una lista global pública de “lo más nuevo”, la muestra **general** reparte los cupos **por turnos** entre etiquetas amplias (`digitalart`, `fanart`, `anime`, `art`, `drawing`, `illustration`, `originalcharacter`, `painting`, `photography`); Populares general suma la **portada**. También puedes medir **una etiqueta concreta** (p. ej. `naruto`).
+
+**Costo**: páginas = máx(⌈X/24⌉, n.º de fuentes) + X peticiones de oEmbed, con la misma concurrencia y pausas de la sincronización. Medido: **100 recientes ≈ 50–70 s**, **100 populares ≈ 70 s**, **48 recientes de #naruto ≈ 30 s**. La interfaz muestra la estimación antes de medir. Solo corre **una medición a la vez**; si DeviantArt presenta un desafío de Cloudflare, se detiene y lo informa.
+
+### Método del contraste
+
+- **Índice de rendimiento a igual edad**: las vistas de una obra ÷ la mediana de las *k* obras del artista con edad más parecida (en escala logarítmica; *k* = n/4 entre 11 y 41). 1,0× = lo normal para su edad. Así **etiquetas, franquicias, días, horas y SFW/NSFW** se comparan sin el sesgo de que lo viejo acumula más vistas (o de que en ciertos años la cuenta creció).
+- **A igual edad**: los snapshots del artista se agrupan por edad (< 6 h, 6 h–1 d, 1–7 d, 7–30 d, 1–12 meses, > 1 año) y se comparan con las obras de las muestras de esa misma edad.
+- **Etiquetas de muestreo**: las etiquetas con las que se reunió la muestra se marcan *muestreo* y **no** se usan para sugerir etiquetas (aparecen por cómo se tomó la muestra, no por tendencia).
+- **Interacción**: medianas de favoritos ÷ vistas (obras con ≥ 30 vistas). En Recientes casi nadie llega a 30 vistas, por eso se compara sobre todo con Populares.
+- **Percentiles**: dónde caería tu obra típica (y la mejor) dentro de Populares, en vistas por día.
+
+### Consejos (reglas explícitas, sin IA)
+
+Cada consejo muestra **las cifras en las que se basa** y una **confianza**: *alta* (≥ 30 datos), *media* (≥ 10), *baja* (menos). Se ordenan por **tamaño del efecto × confianza** (1 / 0,7 / 0,4). Reglas: etiquetas en tendencia que casi no usas (`etiquetas-hueco`), tus etiquetas más fuertes, cantidad de etiquetas, franquicias fuertes/débiles/en tendencia que no tocas, SFW vs. NSFW **a igual edad** y su alcance (lo NSFW no llega a visitantes sin sesión), interacción alta/baja y comentarios, mejor día y franja horaria, constancia o inactividad, y alcance frente a Populares (incluido el primer día). Son **correlaciones**: pruébalas y vuelve a medir.
+
+### Resultados reales (24 de octubre de 2026, ~8:47–8:52 p. m. hora de Bogotá)
+
+Muestras: **100 recientes** generales (92 autores distintos, edad mediana **3 minutos**, 167 min entre la más nueva y la más vieja), **100 populares** generales (95 autores, edad mediana 3,5 años) y 48 recientes de #naruto. Frente a **@feithnoir** (644 obras):
+
+- Obra típica: **1.008 vistas** (0,6 vistas/día) vs. **448.549** en Populares (244 vistas/día): percentil **0** de Populares; su mejor obra llega al percentil **90**.
+- Interacción: **0,99 %** de favoritos por vista vs. **0,22 %** en Populares (**4,6×**).
+- Etiquetas por obra: **7** vs. **15** en Populares y 14,5 en Recientes. En tendencia y casi sin usar: `#digitalpainting` (Populares 30 % · tú 2,3 %), `#characterdesign` (Recientes 26 % · tú 2,8 %), `#fantasy` (19 % · 0,2 %), `#digital` (16 % · 0,2 %), `#artwork` (19 % · 0,2 %).
+- Lo más presente en las muestras: `#digitalart` (Recientes 48 %, Populares 35 %), `#illustration` (20 % / 38 %), `#fanart` (43 % / 15 %), `#originalcharacter` (31 % / 14 %). Por franquicia, las muestras generales son sobre todo **Original** (Recientes 34 %, Populares 17 %) o sin franquicia reconocible (48 % / 72 %: paisajes, retratos, fotos); las franquicias sueltas (Pokémon, Sonic, Disney, Halo…) no pasan de 1–2 %.
+- Fortalezas a igual edad: **Kill la Kill 2,9×** (13 obras), **Soul Knight 2,8×** (28), `#chillyroom` 7,4×, `#fancomic` 5,4×; martes 1,3× vs. miércoles 0,8×.
+- **SFW vs. NSFW**: las medianas brutas (1.452 vs. 486) engañan; **a igual edad rinden igual** (1,0× vs. 1,0×; p = 0,36). El 58 % de la galería es NSFW, mientras Populares (sin sesión) tiene 0 % y Recientes 28 %.
+
 ## Respeto por DeviantArt
 
 - **User-Agent descriptivo** (`da-metricas/1.0 (...)`, configurable con `USER_AGENT`).
@@ -129,7 +180,10 @@ da-metricas/
 │   ├── src/
 │   │   ├── parsers/            # rss.ts, oembed.ts, page.ts (__INITIAL_STATE__), text.ts
 │   │   ├── http.ts             # cliente “amable”: UA, concurrencia, pausas, backoff, caché, Cloudflare
-│   │   ├── deviantart.ts       # perfil, lista (RSS) y detalle (oEmbed → página)
+│   │   ├── deviantart.ts       # perfil, lista (RSS), detalle (oEmbed → página) y páginas de etiquetas
+│   │   ├── parsers/browse.ts   # obras de /tag/… y de la portada (__INITIAL_STATE__)
+│   │   ├── benchmark.ts        # muestras Recientes/Populares: fuentes, cupos por turnos, estimación, medición
+│   │   ├── trends.ts           # análisis de cada muestra, contraste a igual edad y consejos por reglas
 │   │   ├── sync.ts             # orquesta la sincronización y guarda snapshots
 │   │   ├── db.ts               # esquema, migraciones (PRAGMA user_version) y consultas SQLite
 │   │   ├── stats.ts            # estadística pura: media, mediana, cuantiles, Pearson, Spearman, IQR…
@@ -144,13 +198,14 @@ da-metricas/
 │   └── test/                   # Vitest + fixtures reales recortadas
 ├── web/                        # Angular 22 (standalone, signals, sin zone.js), gráficos SVG propios
 │   └── src/app/
-│       ├── pages/              # inicio, artista (obras/análisis), clasificación, detalle de obra, diccionario, opciones
-│       └── charts/             # barras, columnas, columnas apiladas, líneas y dispersión (sin librerías)
+│       ├── pages/              # inicio, artista (obras/análisis), clasificación, detalle de obra, diccionario, opciones,
+│       │                       # tendencias (trends-page, benchmark-view, contrast-view)
+│       └── charts/             # barras, columnas, columnas apiladas, comparación, líneas y dispersión (sin librerías)
 ├── scripts/screenshots.mjs     # capturas con Playwright
 └── .github/workflows/ci.yml    # lint, tests y build
 ```
 
-Tablas SQLite: `artists`, `deviations`, `syncs`, `snapshots` (una fila por obra y sincronización), `classifications` (automática, con evidencia y huella del diccionario), `classification_overrides` (correcciones manuales), `settings` (incluye el diccionario propio) y `http_cache`.
+Tablas SQLite: `artists`, `deviations`, `syncs`, `snapshots` (una fila por obra y sincronización), `classifications` (automática, con evidencia y huella del diccionario), `classification_overrides` (correcciones manuales), `benchmark_runs` y `benchmark_items` (muestras de Tendencias, migración 2), `settings` (incluye el diccionario propio y la medición automática) y `http_cache`.
 
 ## Requisitos e instalación
 
@@ -213,6 +268,13 @@ Desarrollo con recarga: `npm run dev` (API en `:3100`, Angular en `:4300` con pr
 | `GET /api/dictionary` | Diccionario efectivo: versión, huella, franquicias con alias y personajes, y la ampliación propia |
 | `PUT /api/dictionary/custom` / `DELETE /api/dictionary/custom` | Guarda o borra la ampliación propia (JSON validado) y reclasifica todo |
 | `GET /api/settings` / `PUT /api/settings` | Auto-sync: `{ enabled, intervalHours }` (6–168 h). Errores `400` en español |
+| `GET /api/benchmarks` | Muestras guardadas, la que está en curso, límites (24–300), etiquetas generales, estimación y medición automática |
+| `GET /api/benchmarks/estimate?size=&kind=&scope=` | Páginas, peticiones y segundos estimados |
+| `POST /api/benchmarks` | `{ "kind": "recent" \| "popular", "scope": "general" \| "ETIQUETA", "size": 100 }` → `202`. `400` si no es válido, `409` si ya hay otra en curso |
+| `GET /api/benchmarks/:id` / `DELETE /api/benchmarks/:id` | Progreso de una muestra / borrarla (`409` si está corriendo) |
+| `GET /api/benchmarks/:id/analysis` | Análisis completo de la muestra, extras (fuentes, autores, edad) y obras |
+| `GET /api/benchmarks/settings` / `PUT /api/benchmarks/settings` | Medición automática `{ enabled, size, scope }` |
+| `GET /api/artists/:usuario/contrast?recent=&popular=` | Contraste y consejos (por defecto, las últimas muestras generales). `409` si no hay muestras |
 
 ## Notas del método estadístico
 
@@ -253,7 +315,8 @@ Primera sincronización real (24 de octubre de 2026, ~11:14 a. m. hora de Bogot�
 
 - **Servidor (Vitest)**: parsers con **fixtures de respuestas reales** recortadas (`server/test/fixtures`), funciones estadísticas con valores conocidos, cliente HTTP (reintentos, Cloudflare, caché, concurrencia), análisis, CSV y rutas de la API con un DeviantArt simulado a partir de las fixtures (incluye el respaldo HTML, usuario inexistente y usuario sin obras).
 - **Clasificación (Vitest)**: alias y formas de etiqueta (`sakuraharuno`, `sakura_haruno`, `harunosakura`), multi-franquicia, personaje → franquicia, Original, sin clasificar, nombres ambiguos, descripción como respaldo, SFW/NSFW desde `media:rating`/`safety`, validación y fusión del diccionario, **migración** v0 → v1 sin pérdida de datos, correcciones manuales (persisten, mandan y se borran con la obra), Mann–Whitney con valores conocidos y análisis por categoría.
-- **Web (Angular + Vitest)**: formato es-CO, tabla de obras (filtros por título, etiqueta, franquicia, personaje y SFW/NSFW, orden, CSV), página de artista, sección de franquicias/personajes/SFW-NSFW (reclasificar, enlaces que filtran), tarjeta de corrección manual, página del diccionario y gráficos.
+- **Tendencias (Vitest)**: parser de `/tag/…` y portada con fixtures reales, planificación de fuentes y cupos justos por turnos, estimación, validación en español, medición completa con DeviantArt simulado (oEmbed fresco y sin caché, respaldo a las cifras de la página, Cloudflare, una sola medición a la vez), migración v1 → v2, índice a igual edad, contraste y cada regla de consejos, y rutas `/api/benchmarks` y `/contrast`.
+- **Web (Angular + Vitest)**: página de Tendencias (pestañas, medición con progreso, selección de muestras), vista de muestra y contraste con datos reales recortados; formato es-CO, tabla de obras (filtros por título, etiqueta, franquicia, personaje y SFW/NSFW, orden, CSV), página de artista, sección de franquicias/personajes/SFW-NSFW (reclasificar, enlaces que filtran), tarjeta de corrección manual, página del diccionario y gráficos.
 
 ## Licencia
 

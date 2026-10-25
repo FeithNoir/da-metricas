@@ -44,6 +44,16 @@ const shots = [
   { name: 'clasificacion-obra-escritorio.png', path: `/obra/${charWork}`, wait: 'app-classification-card', element: 'app-classification-card', action: openEditor, ...desktop },
   { name: 'clasificacion-obra-movil.png', path: `/obra/${charWork}`, wait: 'app-classification-card', element: 'app-classification-card', action: openEditor, ...mobile },
   { name: 'diccionario-escritorio.png', path: '/diccionario', wait: '.dict-list li', fullPage: false, ...desktop },
+  // Tendencias: muestras Recientes / Populares, contraste y consejos
+  { name: 'tendencias-recientes-escritorio.png', path: '/tendencias?tab=recientes', wait: 'app-benchmark-view .kpis', fullPage: false, ...desktop },
+  { name: 'tendencias-populares-escritorio.png', path: '/tendencias?tab=populares', wait: 'app-benchmark-view .thumbs', element: 'app-benchmark-view section:nth-of-type(1)', ...desktop },
+  { name: 'tendencias-consejos-escritorio.png', path: `/tendencias?tab=contraste&artista=${USER}`, wait: '.advice__item', element: 'app-contrast-view section:nth-of-type(1)', ...desktop },
+  { name: 'tendencias-cara-a-cara-escritorio.png', path: `/tendencias?tab=contraste&artista=${USER}`, wait: '.advice__item', element: 'app-contrast-view section:nth-of-type(2)', ...desktop },
+  { name: 'tendencias-etiquetas-escritorio.png', path: `/tendencias?tab=contraste&artista=${USER}`, wait: '.advice__item', element: 'app-contrast-view section:nth-of-type(5)', ...desktop },
+  { name: 'tendencias-edad-escritorio.png', path: `/tendencias?tab=contraste&artista=${USER}`, wait: '.advice__item', element: 'app-contrast-view section:nth-of-type(4)', ...desktop },
+  { name: 'tendencias-movil.png', path: '/tendencias?tab=recientes', wait: 'app-benchmark-view .kpis', fullPage: false, ...mobile },
+  { name: 'tendencias-consejos-movil.png', path: `/tendencias?tab=contraste&artista=${USER}`, wait: '.advice__item', element: 'app-contrast-view section:nth-of-type(1)', ...mobile },
+  { name: 'tendencias-contraste-movil.png', path: `/tendencias?tab=contraste&artista=${USER}`, wait: '.advice__item', element: 'app-contrast-view section:nth-of-type(5)', ...mobile },
 ];
 const only = process.argv[2];
 const browser = await chromium.launch({ executablePath, headless: true });
